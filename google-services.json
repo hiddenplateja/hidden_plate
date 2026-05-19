@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "979245606123",
+    "project_id": "hidden-plate-9238c",
+    "storage_bucket": "hidden-plate-9238c.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:979245606123:android:de41f2f958811988828aae",
+        "android_client_info": {
+          "package_name": "com.hiddenplate.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyALti2JchefMS3rmMN-Edb7qSQKXPu1S90"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
