@@ -24,8 +24,15 @@
 //   - Broadcasts live here for the same reason — a client doesn't have
 //     read access to all users.
 //
+// IMPORTANT: in this project, the `users` collection uses an auto-generated
+// document `$id` and stores the auth user ID in a separate `userId` field.
+// When extracting recipient IDs for broadcasts and per-doc permissions, we
+// MUST read `doc.userId`, NOT `doc.$id`. Using `$id` would set permissions
+// for an ID that doesn't exist in the auth system, making the doc unreadable
+// by anyone.
+//
 // Environment variables:
-//   APPWRITE_API_KEY              an API key with db read/write + users.read
+//   APPWRITE_API_KEY              an API key with db read/write
 //   DATABASE_ID                   the database ID
 //   NOTIFICATIONS_COLLECTION_ID   the notifications collection ID
 //   PUSH_TOKENS_COLLECTION_ID     the pushTokens collection ID
@@ -290,18 +297,26 @@ async function handleBroadcast(payload, databases, ctx) {
 
   log(`Starting broadcast: type=${type}, title="${title}"`);
 
-  // ── 1. Fetch all user IDs (paginated) ───────────────────────────────────
-  const userIds = await paginateAllDocuments(
+  // ── 1. Fetch all auth user IDs from the users collection ────────────────
+  // IMPORTANT: extract `doc.userId` (the auth user ID), NOT `doc.$id` (the
+  // database row's auto-generated ID). Permissions need the auth ID.
+  const userIdSet = new Set();
+  const userDocs = await paginateAllDocuments(
     databases,
     DATABASE_ID,
     USERS_COLLECTION_ID,
-    (doc) => doc.$id,
+    (doc) => doc, // get the whole doc, we'll extract `userId` next
   );
+  for (const doc of userDocs) {
+    if (doc.userId && typeof doc.userId === "string") {
+      userIdSet.add(doc.userId);
+    }
+  }
+  const userIds = Array.from(userIdSet);
   log(`Broadcast targeting ${userIds.length} users`);
 
   // ── 2. Write a notification doc per user ────────────────────────────────
-  // Done in parallel batches. Failures on individual docs are logged but
-  // don't fail the whole broadcast.
+  // Each doc gets per-doc permissions scoped to the recipient's AUTH ID.
   let notifsCreated = 0;
   let notifsFailed = 0;
   const dataStr = data ? JSON.stringify(data) : null;
@@ -375,7 +390,6 @@ async function handleBroadcast(payload, databases, ctx) {
 
     try {
       const result = await sendExpoPush(messages);
-      // Expo returns one ticket per message; count statuses
       if (result && Array.isArray(result.data)) {
         for (const ticket of result.data) {
           if (ticket.status === "ok") pushedOk++;
