@@ -1,15 +1,24 @@
 // src/services/reviewLikes.ts
 // Like / unlike reviews.
 //
-// IMPORTANT: counter drift acknowledged.
-// We update reviews.likeCount from the client (Option 2). Order:
-//   1. Create/delete the review_likes row (source of truth)
-//   2. Increment/decrement reviews.likeCount (best effort)
-// If step 2 fails, the like still exists. We log and move on.
-// A periodic recount script (Phase 7+) reconciles drift.
+// Counter strategy:
+//   The reviews collection only grants Update permission to each review's
+//   own author, so other users can't update likeCount client-side. We
+//   handle this by routing all counter bumps through the send-notification
+//   Appwrite Function, which runs server-side with an API key.
 //
-// After a successful like, we also fire a notification to the review's
-// author. Fire-and-forget — failures don't block the like.
+// Flow on like:
+//   1. Create the review_likes row (source of truth)
+//   2. triggerLikeNotification — Function bumps likeCount AND fires notification
+//
+// Flow on unlike:
+//   1. Delete the review_likes row (source of truth)
+//   2. Attempt client-side decrement (will fail silently for non-authors;
+//      acceptable drift, reconciled by periodic recount script)
+//
+// We KNOW the unlike decrement fails for other users' reviews. That's a
+// trade-off: full server-side handling would require another Function
+// endpoint. At current scale the drift is acceptable.
 
 import {
   AppwriteException,
@@ -88,10 +97,9 @@ export async function likeReview(
     throw new ReviewLikeError("Failed to like review.");
   }
 
-  // 2. Fetch the review to get its likeCount + author. We need both:
-  //   - likeCount for the counter increment below
-  //   - userId (author) for the notification
-  // One read serves both purposes.
+  // 2. Fetch the review to get the author's userId.
+  // We only need this for the notification trigger — the counter bump
+  // happens server-side in the Function with the review ID alone.
   let review: ReviewDoc | null = null;
   try {
     review = (await databases.getDocument(
@@ -100,25 +108,12 @@ export async function likeReview(
       reviewId,
     )) as unknown as ReviewDoc;
   } catch (err) {
-    console.warn("[reviewLikes] failed to fetch review for like:", err);
+    console.warn("[reviewLikes] failed to fetch review:", err);
   }
 
-  // 3. Increment counter (best effort)
-  if (review) {
-    try {
-      await databases.updateDocument(
-        appwriteConfig.databaseId,
-        appwriteConfig.collections.reviews,
-        reviewId,
-        { likeCount: (review.likeCount ?? 0) + 1 },
-      );
-    } catch (err) {
-      console.warn("[reviewLikes] counter increment failed:", err);
-    }
-  }
-
-  // 4. Notify the review author (fire-and-forget).
-  // The trigger handles self-skip + dedupe + Function invocation internally.
+  // 3. Trigger notification + server-side counter bump (fire-and-forget).
+  // The trigger always bumps likeCount; it skips the notification on
+  // self-actions and dedupe.
   if (review?.userId) {
     triggerLikeNotification({
       recipientUserId: review.userId,
@@ -134,7 +129,7 @@ export async function likeReview(
 export async function unlikeReview(reviewId: string): Promise<void> {
   const me = await getCurrentUser();
 
-  // 1. Find and delete the like row
+  // 1. Find and delete the like row (source of truth)
   let deleted = false;
   try {
     const res = await databases.listDocuments(
@@ -159,7 +154,9 @@ export async function unlikeReview(reviewId: string): Promise<void> {
     throw new ReviewLikeError("Failed to unlike review.");
   }
 
-  // 2. Decrement counter (best effort). No notification on unlike.
+  // 2. Best-effort client-side decrement. Will fail silently when the
+  // current user isn't the review's author (most cases). Acceptable
+  // drift — reconciled by periodic recount script.
   if (!deleted) return;
   try {
     const review = (await databases.getDocument(
@@ -176,7 +173,8 @@ export async function unlikeReview(reviewId: string): Promise<void> {
       { likeCount: next },
     );
   } catch (err) {
-    console.warn("[reviewLikes] counter decrement failed:", err);
+    // Expected for non-author users. Drift accepted.
+    console.warn("[reviewLikes] counter decrement failed (expected):", err);
   }
 }
 

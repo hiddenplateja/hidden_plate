@@ -1,24 +1,35 @@
-// send-notification/src/main.js
+// appwrite-functions/send-notification/src/main.js
 // Appwrite Function — runs server-side with an API key.
 //
-// Receives: { userId, actorId, type, title, body, data } via req.body
+// Receives via req.body:
+//   {
+//     userId, actorId, type, title, body, data,
+//     bumpCounter?:      { reviewId, field: "likeCount" | "commentCount" },
+//     skipNotification?: boolean  // when true, only does the counter bump
+//   }
 //
-// Does:
-//   1. Persists a notification doc to the `notifications` collection
-//      with per-doc Read/Update/Delete permissions for the recipient
-//   2. Looks up the recipient's push tokens in `pushTokens`
-//   3. Calls Expo's push API to deliver banners to those devices
+// Two distinct operations, composable in one call:
 //
-// Why this lives server-side:
-//   The client never reads other users' push tokens (security). The
-//   collection's Read permission is empty — only this Function (with the
-//   API key from env) can read tokens.
+//   A. Counter bump (when bumpCounter is set)
+//      Increments a denormalized counter (likeCount / commentCount) on the
+//      parent review. Runs with the Function's API key so it bypasses
+//      reviews' Update permission (which restricts to the review author).
+//
+//   B. Notification persist + push (when skipNotification !== true)
+//      Writes the notification doc with per-doc permissions for the
+//      recipient, then fans out to all the recipient's push tokens via
+//      Expo Push API.
+//
+// Both A and B can happen in the same call. Or A alone (skipNotification=true).
+// Or B alone (no bumpCounter). The client chooses which combination based
+// on context (self-actions only bump, dedupe-skipped actions only bump).
 //
 // Environment variables required:
 //   APPWRITE_API_KEY              an API key with database read/write
-//   DATABASE_ID                    the database ID
-//   NOTIFICATIONS_COLLECTION_ID    the notifications collection ID
-//   PUSH_TOKENS_COLLECTION_ID      the pushTokens collection ID
+//   DATABASE_ID                   the database ID
+//   NOTIFICATIONS_COLLECTION_ID   the notifications collection ID
+//   PUSH_TOKENS_COLLECTION_ID     the pushTokens collection ID
+//   REVIEWS_COLLECTION_ID         the reviews collection ID (for counter bumps)
 
 import { Client, Databases, ID, Permission, Query, Role } from "node-appwrite";
 
@@ -31,6 +42,7 @@ export default async ({ req, res, log, error }) => {
     DATABASE_ID,
     NOTIFICATIONS_COLLECTION_ID,
     PUSH_TOKENS_COLLECTION_ID,
+    REVIEWS_COLLECTION_ID,
   } = process.env;
 
   if (
@@ -64,19 +76,76 @@ export default async ({ req, res, log, error }) => {
     return res.json({ success: false, error: "Invalid JSON" }, 400);
   }
 
-  const { userId, actorId, type, title, body, data } = payload;
+  const {
+    userId,
+    actorId,
+    type,
+    title,
+    body,
+    data,
+    bumpCounter,
+    skipNotification,
+  } = payload;
 
-  if (!userId || !type || !title || !body) {
-    return res.json(
-      {
-        success: false,
-        error: "userId, type, title, and body are required",
-      },
-      400,
-    );
+  // Counter-only mode requires bumpCounter; otherwise we need notification fields
+  const isCounterOnly = skipNotification === true;
+  if (isCounterOnly) {
+    if (!bumpCounter || !bumpCounter.reviewId || !bumpCounter.field) {
+      return res.json(
+        {
+          success: false,
+          error: "bumpCounter required when skipNotification=true",
+        },
+        400,
+      );
+    }
+  } else {
+    if (!userId || !type || !title || !body) {
+      return res.json(
+        {
+          success: false,
+          error: "userId, type, title, and body are required",
+        },
+        400,
+      );
+    }
   }
 
-  // ── 1. Persist the notification doc ─────────────────────────────────────
+  // ── A. Optional counter bump ────────────────────────────────────────────
+  if (
+    bumpCounter &&
+    bumpCounter.reviewId &&
+    bumpCounter.field &&
+    REVIEWS_COLLECTION_ID
+  ) {
+    try {
+      const review = await databases.getDocument(
+        DATABASE_ID,
+        REVIEWS_COLLECTION_ID,
+        bumpCounter.reviewId,
+      );
+      const current = review[bumpCounter.field] ?? 0;
+      await databases.updateDocument(
+        DATABASE_ID,
+        REVIEWS_COLLECTION_ID,
+        bumpCounter.reviewId,
+        { [bumpCounter.field]: current + 1 },
+      );
+      log(
+        `Bumped ${bumpCounter.field} on review ${bumpCounter.reviewId}: ${current} -> ${current + 1}`,
+      );
+    } catch (err) {
+      // Non-fatal — log and continue. Notification can still fire.
+      error(`Counter bump failed: ${err.message}`);
+    }
+  }
+
+  // Bump-only mode — return now without persisting/pushing
+  if (isCounterOnly) {
+    return res.json({ success: true, bumped: true, notified: false });
+  }
+
+  // ── B. Persist the notification doc ─────────────────────────────────────
   // Per-doc permissions: only the recipient can read/update/delete.
   // This is critical — the collection has no collection-level Read, so
   // without these per-doc perms the recipient can't see their own notifs.
@@ -107,7 +176,7 @@ export default async ({ req, res, log, error }) => {
     // the in-app row but still get the banner, which is better than nothing.
   }
 
-  // ── 2. Look up recipient's push tokens ──────────────────────────────────
+  // ── B.2 Look up recipient's push tokens ─────────────────────────────────
   let tokens;
   try {
     const result = await databases.listDocuments(
@@ -129,7 +198,7 @@ export default async ({ req, res, log, error }) => {
     return res.json({ success: true, pushed: false, reason: "No tokens" });
   }
 
-  // ── 3. Build + send Expo Push messages ──────────────────────────────────
+  // ── B.3 Build + send Expo Push messages ─────────────────────────────────
   // Expo's API accepts an array of messages. One per token.
   // Critical: we include `type` in the `data` payload so the client's
   // notification listener can route deep-links correctly on tap.
@@ -166,9 +235,6 @@ export default async ({ req, res, log, error }) => {
     });
   } catch (err) {
     error("Expo push send failed: " + err.message);
-    return res.json(
-      { success: false, error: "Push delivery failed" },
-      500,
-    );
+    return res.json({ success: false, error: "Push delivery failed" }, 500);
   }
 };

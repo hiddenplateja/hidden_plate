@@ -1,14 +1,23 @@
 // src/services/reviewComments.ts
-// Comments on reviews. Same per-doc permissions pattern as reviews:
+// Comments on reviews.
+//
+// Per-doc permissions:
 //   Read: any logged-in user
 //   Delete: only the comment author
 //
-// commentCount on the parent review is maintained client-side via
-// read-then-write. There's a tiny race window if two people comment
-// simultaneously; at current scale that's fine. Swap to a Cloud Function
-// when scale demands it (same story as the rating denormalization).
+// Counter strategy: same as reviewLikes. The reviews collection only allows
+// the review's author to Update — other users can't bump commentCount
+// client-side. We route bumps through the send-notification Function.
 //
-// After a successful comment, we notify the review's author (fire-and-forget).
+// Flow on add:
+//   1. Fetch the parent review to get the author's userId (for notification)
+//   2. Create the comment doc (source of truth)
+//   3. triggerCommentNotification — Function bumps commentCount AND notifies
+//
+// Flow on delete:
+//   1. Delete the comment doc (source of truth)
+//   2. Attempt client-side decrement (will fail silently for non-authors;
+//      acceptable drift, reconciled by periodic recount script)
 
 import {
   AppwriteException,
@@ -86,39 +95,6 @@ function validateText(text: string): void {
   }
 }
 
-// ---------- commentCount helpers ----------
-// Read-then-write. Not atomic, but acceptable at current scale.
-// Returns the review author's userId so callers can use it to send a
-// notification without a second read of the same doc.
-
-async function bumpCommentCount(
-  reviewId: string,
-  delta: 1 | -1,
-): Promise<string | null> {
-  try {
-    const doc = (await databases.getDocument(
-      appwriteConfig.databaseId,
-      appwriteConfig.collections.reviews,
-      reviewId,
-    )) as unknown as ReviewAuthorDoc;
-    const current = doc.commentCount ?? 0;
-    const next = Math.max(0, current + delta);
-    await databases.updateDocument(
-      appwriteConfig.databaseId,
-      appwriteConfig.collections.reviews,
-      reviewId,
-      { commentCount: next },
-    );
-    return doc.userId ?? null;
-  } catch (err) {
-    // Don't fail the whole comment op if the counter update fails — the
-    // comment doc itself is the source of truth. We can recompute counters
-    // out-of-band if they drift.
-    console.warn("[comments] bumpCommentCount failed:", err);
-    return null;
-  }
-}
-
 // ---------- Public API ----------
 
 const PAGE_SIZE = 30;
@@ -180,6 +156,22 @@ export async function addComment(
     throw new CommentError("You must be signed in to comment.");
   }
 
+  // Look up the parent review's author up front. We need this for the
+  // notification trigger; the counter bump happens server-side from the
+  // review ID alone.
+  let reviewAuthorId: string | null = null;
+  try {
+    const review = (await databases.getDocument(
+      appwriteConfig.databaseId,
+      appwriteConfig.collections.reviews,
+      input.reviewId,
+    )) as unknown as ReviewAuthorDoc;
+    reviewAuthorId = review.userId ?? null;
+  } catch (err) {
+    console.warn("[comments] failed to fetch review author:", err);
+  }
+
+  // Create the comment doc
   let createdDoc: CommentDoc;
   try {
     const doc = await databases.createDocument(
@@ -199,29 +191,30 @@ export async function addComment(
     throw toCommentError(err, "Failed to post comment.");
   }
 
-  // Counter bump returns the review's author — reuse it for the notification
-  // instead of a second read of the review doc. Both are fire-and-forget.
-  bumpCommentCount(input.reviewId, 1)
-    .then((reviewAuthorId) => {
-      if (reviewAuthorId) {
-        return triggerCommentNotification({
-          recipientUserId: reviewAuthorId,
-          actorId: me.$id,
-          actorName: me.name || "Someone",
-          reviewId: input.reviewId,
-          commentSnippet: input.text.trim(),
-        });
-      }
-    })
-    .catch((err) => {
+  // Fire-and-forget: notification trigger handles both the push and the
+  // server-side commentCount bump. Routes notification only if not a
+  // self-action and not deduped.
+  if (reviewAuthorId) {
+    triggerCommentNotification({
+      recipientUserId: reviewAuthorId,
+      actorId: me.$id,
+      actorName: me.name || "Someone",
+      reviewId: input.reviewId,
+      commentSnippet: input.text.trim(),
+    }).catch((err) => {
       console.warn("[comments] notification trigger failed:", err);
     });
+  }
 
   return mapDoc(createdDoc);
 }
 
 /**
  * Delete a comment. Only the author can delete (enforced by permissions).
+ *
+ * commentCount decrement is best-effort and will silently fail for
+ * non-author users (i.e. anyone other than the review's owner deleting
+ * their own comment). Drift accepted; reconciled by periodic recount.
  */
 export async function deleteComment(
   commentId: string,
@@ -233,8 +226,27 @@ export async function deleteComment(
       appwriteConfig.collections.reviewComments,
       commentId,
     );
-    void bumpCommentCount(reviewId, -1);
   } catch (err) {
     throw toCommentError(err, "Failed to delete comment.");
+  }
+
+  // Best-effort decrement. Expected to fail for non-review-author users.
+  try {
+    const doc = (await databases.getDocument(
+      appwriteConfig.databaseId,
+      appwriteConfig.collections.reviews,
+      reviewId,
+    )) as unknown as ReviewAuthorDoc;
+    const current = doc.commentCount ?? 0;
+    const next = Math.max(0, current - 1);
+    await databases.updateDocument(
+      appwriteConfig.databaseId,
+      appwriteConfig.collections.reviews,
+      reviewId,
+      { commentCount: next },
+    );
+  } catch (err) {
+    // Expected for non-author users. Drift accepted.
+    console.warn("[comments] commentCount decrement failed (expected):", err);
   }
 }
