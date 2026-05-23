@@ -1,7 +1,7 @@
 // appwrite-functions/send-notification/src/main.js
 // Appwrite Function — runs server-side with an API key.
 //
-// Two modes:
+// Three modes:
 //
 //   ─── Single-recipient mode (default) ────────────────────────────────
 //   Payload: { userId, actorId, type, title, body, data, bumpCounter?, skipNotification? }
@@ -9,16 +9,20 @@
 //   the client.
 //
 //   ─── Broadcast mode ──────────────────────────────────────────────────
-//   Payload: { broadcast: true, type, title, body, data }
-//   Fans out to ALL registered users:
-//     - Writes one notification doc per user
-//     - Sends one Expo push per token (chunked into batches of 100)
-//   Used by the admin to announce new restaurants. Trigger this from the
-//   Appwrite Console's Execute tab; no client UI invokes it.
+//   Payload: { broadcast: true, adminSecret, type, title, body, data }
+//   Fans out to ALL registered users. REQUIRES adminSecret matching the
+//   ADMIN_SECRET env var. Without it the call is rejected. Used by the
+//   admin to announce new restaurants from the Appwrite Console.
+//
+//   ─── Moderation mode ─────────────────────────────────────────────────
+//   Payload: { moderation: true, reviewId }
+//   Counts the reports filed against the given review. If count meets the
+//   MODERATION_REPORT_THRESHOLD (default 3), sets review.isHidden=true.
+//   Called by the reports service after a new report is filed.
 //
 // Why these distinctions exist:
-//   - Counter bumps live server-side because reviews are owned by their
-//     authors — other users can't update them.
+//   - Counter bumps + report-based hides live server-side because reviews
+//     are owned by their authors — other users can't update them.
 //   - Push sends live server-side because the client must never read other
 //     users' push tokens.
 //   - Broadcasts live here for the same reason — a client doesn't have
@@ -27,26 +31,37 @@
 // IMPORTANT: in this project, the `users` collection uses an auto-generated
 // document `$id` and stores the auth user ID in a separate `userId` field.
 // When extracting recipient IDs for broadcasts and per-doc permissions, we
-// MUST read `doc.userId`, NOT `doc.$id`. Using `$id` would set permissions
-// for an ID that doesn't exist in the auth system, making the doc unreadable
-// by anyone.
+// MUST read `doc.userId`, NOT `doc.$id`.
 //
 // Environment variables:
-//   APPWRITE_API_KEY              an API key with db read/write
-//   DATABASE_ID                   the database ID
-//   NOTIFICATIONS_COLLECTION_ID   the notifications collection ID
-//   PUSH_TOKENS_COLLECTION_ID     the pushTokens collection ID
-//   REVIEWS_COLLECTION_ID         the reviews collection ID (for counter bumps)
-//   USERS_COLLECTION_ID           the users collection ID (for broadcasts)
+//   APPWRITE_API_KEY                an API key with db read/write
+//   DATABASE_ID                     the database ID
+//   NOTIFICATIONS_COLLECTION_ID     the notifications collection ID
+//   PUSH_TOKENS_COLLECTION_ID       the pushTokens collection ID
+//   REVIEWS_COLLECTION_ID           the reviews collection ID (counter bumps + hide)
+//   USERS_COLLECTION_ID             the users collection ID (broadcasts)
+//   REVIEW_REPORTS_COLLECTION_ID    the reviewReports collection ID (moderation)
+//   ADMIN_SECRET                    shared secret required for broadcasts
+//   MODERATION_REPORT_THRESHOLD     optional, default 3 — auto-hide after N reports
 
 import { Client, Databases, ID, Permission, Query, Role } from "node-appwrite";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
-const PUSH_BATCH_SIZE = 100; // Expo's limit per request
-const PAGE_SIZE = 100; // Appwrite list pagination
+const PUSH_BATCH_SIZE = 100;
+const PAGE_SIZE = 100;
+const DEFAULT_MODERATION_THRESHOLD = 3;
+
+// URL detection — mirrors the client-side regex in src/utils/contentValidation.ts.
+// Kept in sync manually since the function runs in Node and can't import client TS.
+const URL_REGEX =
+  /(\b(?:https?|ftp):\/\/[^\s]+)|(\bwww\.[^\s]+\.[a-z]{2,}\b)|(\b[a-z0-9-]+\.(?:com|net|org|io|co|app|dev|me|info|biz|ly|gov|edu|jm)(?:\.[a-z]{2})?\b)/i;
+
+function containsUrl(text) {
+  if (!text || typeof text !== "string") return false;
+  return URL_REGEX.test(text);
+}
 
 export default async ({ req, res, log, error }) => {
-  // ── Validate env ────────────────────────────────────────────────────────
   const {
     APPWRITE_FUNCTION_API_ENDPOINT,
     APPWRITE_FUNCTION_PROJECT_ID,
@@ -56,6 +71,9 @@ export default async ({ req, res, log, error }) => {
     PUSH_TOKENS_COLLECTION_ID,
     REVIEWS_COLLECTION_ID,
     USERS_COLLECTION_ID,
+    REVIEW_REPORTS_COLLECTION_ID,
+    ADMIN_SECRET,
+    MODERATION_REPORT_THRESHOLD,
   } = process.env;
 
   if (
@@ -71,7 +89,6 @@ export default async ({ req, res, log, error }) => {
     );
   }
 
-  // ── Set up Appwrite client with API key (server-side privileges) ────────
   const client = new Client()
     .setEndpoint(APPWRITE_FUNCTION_API_ENDPOINT)
     .setProject(APPWRITE_FUNCTION_PROJECT_ID)
@@ -79,7 +96,6 @@ export default async ({ req, res, log, error }) => {
 
   const databases = new Databases(client);
 
-  // ── Parse payload ───────────────────────────────────────────────────────
   let payload;
   try {
     payload =
@@ -89,8 +105,33 @@ export default async ({ req, res, log, error }) => {
     return res.json({ success: false, error: "Invalid JSON" }, 400);
   }
 
-  // ── ROUTE: broadcast vs single-recipient ────────────────────────────────
+  // ── Route by mode ───────────────────────────────────────────────────────
+  if (payload.moderation === true) {
+    return handleModeration(payload, databases, {
+      DATABASE_ID,
+      REVIEWS_COLLECTION_ID,
+      REVIEW_REPORTS_COLLECTION_ID,
+      threshold: parseThreshold(MODERATION_REPORT_THRESHOLD),
+      res,
+      log,
+      error,
+    });
+  }
+
   if (payload.broadcast === true) {
+    // Verify admin secret BEFORE doing any work. Reject early so an attacker
+    // who knows the function ID still can't spam users.
+    if (!ADMIN_SECRET) {
+      error("Broadcast attempted but ADMIN_SECRET is not configured");
+      return res.json(
+        { success: false, error: "Broadcast not configured on server" },
+        500,
+      );
+    }
+    if (payload.adminSecret !== ADMIN_SECRET) {
+      error("Broadcast rejected: invalid or missing adminSecret");
+      return res.json({ success: false, error: "Unauthorized" }, 403);
+    }
     return handleBroadcast(payload, databases, {
       DATABASE_ID,
       NOTIFICATIONS_COLLECTION_ID,
@@ -112,6 +153,12 @@ export default async ({ req, res, log, error }) => {
     error,
   });
 };
+
+function parseThreshold(raw) {
+  if (!raw) return DEFAULT_MODERATION_THRESHOLD;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MODERATION_THRESHOLD;
+}
 
 // ─── Single-recipient handler ────────────────────────────────────────────────
 async function handleSingleRecipient(payload, databases, ctx) {
@@ -154,9 +201,17 @@ async function handleSingleRecipient(payload, databases, ctx) {
         400,
       );
     }
+    // Defense in depth: if a modified client manages to invoke the function
+    // with URL-containing title/body, reject server-side too.
+    if (containsUrl(title) || containsUrl(body)) {
+      error("Notification text contained a URL — rejected");
+      return res.json(
+        { success: false, error: "Content contains disallowed links" },
+        400,
+      );
+    }
   }
 
-  // ── A. Optional counter bump ────────────────────────────────────────────
   if (
     bumpCounter &&
     bumpCounter.reviewId &&
@@ -184,12 +239,10 @@ async function handleSingleRecipient(payload, databases, ctx) {
     }
   }
 
-  // Counter-only mode — return now
   if (isCounterOnly) {
     return res.json({ success: true, bumped: true, notified: false });
   }
 
-  // ── B. Persist the notification doc ─────────────────────────────────────
   try {
     await databases.createDocument(
       DATABASE_ID,
@@ -215,7 +268,6 @@ async function handleSingleRecipient(payload, databases, ctx) {
     error("Failed to persist notification: " + err.message);
   }
 
-  // ── C. Look up tokens + send push ───────────────────────────────────────
   let tokens;
   try {
     const result = await databases.listDocuments(
@@ -285,6 +337,17 @@ async function handleBroadcast(payload, databases, ctx) {
     );
   }
 
+  // Defense in depth — same as single-recipient. Admin shouldn't be posting
+  // links via push either; if they want to share a URL, it goes in the
+  // data.url field which deep-links into the app, not displayed text.
+  if (containsUrl(title) || containsUrl(body)) {
+    error("Broadcast text contained a URL — rejected");
+    return res.json(
+      { success: false, error: "Broadcast content contains disallowed links" },
+      400,
+    );
+  }
+
   if (!USERS_COLLECTION_ID) {
     return res.json(
       {
@@ -297,15 +360,12 @@ async function handleBroadcast(payload, databases, ctx) {
 
   log(`Starting broadcast: type=${type}, title="${title}"`);
 
-  // ── 1. Fetch all auth user IDs from the users collection ────────────────
-  // IMPORTANT: extract `doc.userId` (the auth user ID), NOT `doc.$id` (the
-  // database row's auto-generated ID). Permissions need the auth ID.
   const userIdSet = new Set();
   const userDocs = await paginateAllDocuments(
     databases,
     DATABASE_ID,
     USERS_COLLECTION_ID,
-    (doc) => doc, // get the whole doc, we'll extract `userId` next
+    (doc) => doc,
   );
   for (const doc of userDocs) {
     if (doc.userId && typeof doc.userId === "string") {
@@ -315,13 +375,10 @@ async function handleBroadcast(payload, databases, ctx) {
   const userIds = Array.from(userIdSet);
   log(`Broadcast targeting ${userIds.length} users`);
 
-  // ── 2. Write a notification doc per user ────────────────────────────────
-  // Each doc gets per-doc permissions scoped to the recipient's AUTH ID.
   let notifsCreated = 0;
   let notifsFailed = 0;
   const dataStr = data ? JSON.stringify(data) : null;
 
-  // Process in chunks to avoid hammering the API
   const NOTIF_CHUNK = 25;
   for (let i = 0; i < userIds.length; i += NOTIF_CHUNK) {
     const chunk = userIds.slice(i, i + NOTIF_CHUNK);
@@ -333,7 +390,7 @@ async function handleBroadcast(payload, databases, ctx) {
           ID.unique(),
           {
             userId: uid,
-            actorId: "", // broadcasts have no actor
+            actorId: "",
             type,
             title,
             body,
@@ -355,7 +412,6 @@ async function handleBroadcast(payload, databases, ctx) {
   }
   log(`Notifications: ${notifsCreated} created, ${notifsFailed} failed`);
 
-  // ── 3. Fetch all push tokens (paginated) ────────────────────────────────
   const tokens = await paginateAllDocuments(
     databases,
     DATABASE_ID,
@@ -374,7 +430,6 @@ async function handleBroadcast(payload, databases, ctx) {
     });
   }
 
-  // ── 4. Send pushes in batches of PUSH_BATCH_SIZE (Expo's limit) ─────────
   let pushedOk = 0;
   let pushedErrors = 0;
   for (let i = 0; i < tokens.length; i += PUSH_BATCH_SIZE) {
@@ -419,14 +474,98 @@ async function handleBroadcast(payload, databases, ctx) {
   });
 }
 
+// ─── Moderation handler ──────────────────────────────────────────────────────
+async function handleModeration(payload, databases, ctx) {
+  const {
+    DATABASE_ID,
+    REVIEWS_COLLECTION_ID,
+    REVIEW_REPORTS_COLLECTION_ID,
+    threshold,
+    res,
+    log,
+    error,
+  } = ctx;
+
+  const { reviewId } = payload;
+
+  if (!reviewId) {
+    return res.json({ success: false, error: "reviewId required" }, 400);
+  }
+
+  if (!REVIEWS_COLLECTION_ID || !REVIEW_REPORTS_COLLECTION_ID) {
+    return res.json(
+      {
+        success: false,
+        error:
+          "Moderation requires REVIEWS_COLLECTION_ID and REVIEW_REPORTS_COLLECTION_ID env vars",
+      },
+      500,
+    );
+  }
+
+  // Count reports against this review. We use limit=1 because we only
+  // need the `total` field — Appwrite returns the full count of matching
+  // documents regardless of the page size.
+  let totalReports;
+  try {
+    const result = await databases.listDocuments(
+      DATABASE_ID,
+      REVIEW_REPORTS_COLLECTION_ID,
+      [Query.equal("reviewId", reviewId), Query.limit(1)],
+    );
+    totalReports = result.total;
+  } catch (err) {
+    error("Failed to count reports: " + err.message);
+    return res.json({ success: false, error: "Could not count reports" }, 500);
+  }
+
+  log(
+    `Review ${reviewId} has ${totalReports} reports (threshold ${threshold})`,
+  );
+
+  if (totalReports < threshold) {
+    return res.json({
+      success: true,
+      reviewId,
+      reports: totalReports,
+      threshold,
+      hidden: false,
+    });
+  }
+
+  // Threshold met — hide the review. Idempotent: if it's already hidden,
+  // setting isHidden=true is a no-op. We don't bother reading the current
+  // value first since the write is cheap.
+  try {
+    await databases.updateDocument(
+      DATABASE_ID,
+      REVIEWS_COLLECTION_ID,
+      reviewId,
+      { isHidden: true },
+    );
+    log(`Review ${reviewId} auto-hidden (${totalReports} reports)`);
+    return res.json({
+      success: true,
+      reviewId,
+      reports: totalReports,
+      threshold,
+      hidden: true,
+    });
+  } catch (err) {
+    error("Failed to hide review: " + err.message);
+    return res.json(
+      {
+        success: false,
+        error: "Could not hide review",
+        reports: totalReports,
+      },
+      500,
+    );
+  }
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/**
- * Page through every document in a collection, applying `extract` to each
- * to produce the desired result array.
- *
- * Uses cursor-based pagination — safe across very large collections.
- */
 async function paginateAllDocuments(
   databases,
   databaseId,
@@ -451,10 +590,6 @@ async function paginateAllDocuments(
   return out;
 }
 
-/**
- * Wrapper around the Expo Push API.
- * Throws on network/HTTP error; caller wraps in try/catch.
- */
 async function sendExpoPush(messages) {
   const response = await fetch(EXPO_PUSH_URL, {
     method: "POST",
