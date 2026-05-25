@@ -5,28 +5,22 @@
 //
 //   ─── Single-recipient mode (default) ────────────────────────────────
 //   Payload: { userId, actorId, type, title, body, data, bumpCounter?, skipNotification? }
-//   Sends to ONE recipient. Used by like/follow/comment triggers from
-//   the client.
+//   Sends to ONE recipient.
+//   Honors recipient's notification prefs from account.prefs:
+//     - notificationsEnabled (master)
+//     - notifyOnLike, notifyOnComment, notifyOnFollow (matched against `type`)
+//   When suppressed: counter bump still runs, but no notification doc is
+//   created and no push is sent.
 //
 //   ─── Broadcast mode ──────────────────────────────────────────────────
 //   Payload: { broadcast: true, adminSecret, type, title, body, data }
-//   Fans out to ALL registered users. REQUIRES adminSecret matching the
-//   ADMIN_SECRET env var. Without it the call is rejected. Used by the
-//   admin to announce new restaurants from the Appwrite Console.
+//   Fans out to ALL registered users. REQUIRES adminSecret.
+//   Honors per-recipient notifyOnBroadcast + notificationsEnabled prefs —
+//   recipients with broadcasts disabled don't get a doc or a push.
 //
 //   ─── Moderation mode ─────────────────────────────────────────────────
 //   Payload: { moderation: true, reviewId }
-//   Counts the reports filed against the given review. If count meets the
-//   MODERATION_REPORT_THRESHOLD (default 3), sets review.isHidden=true.
-//   Called by the reports service after a new report is filed.
-//
-// Why these distinctions exist:
-//   - Counter bumps + report-based hides live server-side because reviews
-//     are owned by their authors — other users can't update them.
-//   - Push sends live server-side because the client must never read other
-//     users' push tokens.
-//   - Broadcasts live here for the same reason — a client doesn't have
-//     read access to all users.
+//   Counts reports; auto-hides at threshold.
 //
 // IMPORTANT: in this project, the `users` collection uses an auto-generated
 // document `$id` and stores the auth user ID in a separate `userId` field.
@@ -34,31 +28,84 @@
 // MUST read `doc.userId`, NOT `doc.$id`.
 //
 // Environment variables:
-//   APPWRITE_API_KEY                an API key with db read/write
-//   DATABASE_ID                     the database ID
-//   NOTIFICATIONS_COLLECTION_ID     the notifications collection ID
-//   PUSH_TOKENS_COLLECTION_ID       the pushTokens collection ID
-//   REVIEWS_COLLECTION_ID           the reviews collection ID (counter bumps + hide)
-//   USERS_COLLECTION_ID             the users collection ID (broadcasts)
-//   REVIEW_REPORTS_COLLECTION_ID    the reviewReports collection ID (moderation)
-//   ADMIN_SECRET                    shared secret required for broadcasts
-//   MODERATION_REPORT_THRESHOLD     optional, default 3 — auto-hide after N reports
+//   APPWRITE_API_KEY                an API key with db read/write + users.read
+//   DATABASE_ID
+//   NOTIFICATIONS_COLLECTION_ID
+//   PUSH_TOKENS_COLLECTION_ID
+//   REVIEWS_COLLECTION_ID
+//   USERS_COLLECTION_ID
+//   REVIEW_REPORTS_COLLECTION_ID
+//   ADMIN_SECRET
+//   MODERATION_REPORT_THRESHOLD     optional, default 3
 
-import { Client, Databases, ID, Permission, Query, Role } from "node-appwrite";
+import {
+  Client,
+  Databases,
+  ID,
+  Permission,
+  Query,
+  Role,
+  Users,
+} from "node-appwrite";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 const PUSH_BATCH_SIZE = 100;
 const PAGE_SIZE = 100;
 const DEFAULT_MODERATION_THRESHOLD = 3;
 
-// URL detection — mirrors the client-side regex in src/utils/contentValidation.ts.
-// Kept in sync manually since the function runs in Node and can't import client TS.
+// URL detection — mirrors src/utils/contentValidation.ts
 const URL_REGEX =
   /(\b(?:https?|ftp):\/\/[^\s]+)|(\bwww\.[^\s]+\.[a-z]{2,}\b)|(\b[a-z0-9-]+\.(?:com|net|org|io|co|app|dev|me|info|biz|ly|gov|edu|jm)(?:\.[a-z]{2})?\b)/i;
 
 function containsUrl(text) {
   if (!text || typeof text !== "string") return false;
   return URL_REGEX.test(text);
+}
+
+// Map notification type → preference key. Add new types here as we add them.
+// If a type has no entry, it's treated as "always allowed" (subject to the
+// master toggle only). Today everything has an entry.
+const TYPE_TO_PREF_KEY = {
+  like: "notifyOnLike",
+  comment: "notifyOnComment",
+  follow: "notifyOnFollow",
+  new_restaurant: "notifyOnBroadcast",
+  broadcast: "notifyOnBroadcast",
+};
+
+/**
+ * Read a recipient's notification prefs via Users API and decide whether
+ * the given notification type should be delivered.
+ *
+ * Defaults are opt-out (everything allowed when unset). Returns true if
+ * we should send, false if suppressed.
+ */
+async function shouldNotify(users, recipientUserId, type, log) {
+  try {
+    const prefs = await users.getPrefs(recipientUserId);
+
+    // Master toggle — false means no notifications at all
+    if (prefs.notificationsEnabled === false) {
+      log(`Recipient ${recipientUserId}: master toggle off`);
+      return false;
+    }
+
+    // Per-type toggle
+    const key = TYPE_TO_PREF_KEY[type];
+    if (key && prefs[key] === false) {
+      log(`Recipient ${recipientUserId}: ${key} is off`);
+      return false;
+    }
+
+    return true;
+  } catch (err) {
+    // If we can't read prefs (rare), default to sending. Better to over-
+    // notify than to silently drop something the user expected.
+    log(
+      `Could not read prefs for ${recipientUserId}, defaulting to send: ${err.message}`,
+    );
+    return true;
+  }
 }
 
 export default async ({ req, res, log, error }) => {
@@ -95,6 +142,7 @@ export default async ({ req, res, log, error }) => {
     .setKey(APPWRITE_API_KEY);
 
   const databases = new Databases(client);
+  const users = new Users(client);
 
   let payload;
   try {
@@ -105,7 +153,6 @@ export default async ({ req, res, log, error }) => {
     return res.json({ success: false, error: "Invalid JSON" }, 400);
   }
 
-  // ── Route by mode ───────────────────────────────────────────────────────
   if (payload.moderation === true) {
     return handleModeration(payload, databases, {
       DATABASE_ID,
@@ -119,8 +166,6 @@ export default async ({ req, res, log, error }) => {
   }
 
   if (payload.broadcast === true) {
-    // Verify admin secret BEFORE doing any work. Reject early so an attacker
-    // who knows the function ID still can't spam users.
     if (!ADMIN_SECRET) {
       error("Broadcast attempted but ADMIN_SECRET is not configured");
       return res.json(
@@ -132,7 +177,7 @@ export default async ({ req, res, log, error }) => {
       error("Broadcast rejected: invalid or missing adminSecret");
       return res.json({ success: false, error: "Unauthorized" }, 403);
     }
-    return handleBroadcast(payload, databases, {
+    return handleBroadcast(payload, databases, users, {
       DATABASE_ID,
       NOTIFICATIONS_COLLECTION_ID,
       PUSH_TOKENS_COLLECTION_ID,
@@ -143,7 +188,7 @@ export default async ({ req, res, log, error }) => {
     });
   }
 
-  return handleSingleRecipient(payload, databases, {
+  return handleSingleRecipient(payload, databases, users, {
     DATABASE_ID,
     NOTIFICATIONS_COLLECTION_ID,
     PUSH_TOKENS_COLLECTION_ID,
@@ -161,7 +206,7 @@ function parseThreshold(raw) {
 }
 
 // ─── Single-recipient handler ────────────────────────────────────────────────
-async function handleSingleRecipient(payload, databases, ctx) {
+async function handleSingleRecipient(payload, databases, users, ctx) {
   const {
     DATABASE_ID,
     NOTIFICATIONS_COLLECTION_ID,
@@ -201,8 +246,6 @@ async function handleSingleRecipient(payload, databases, ctx) {
         400,
       );
     }
-    // Defense in depth: if a modified client manages to invoke the function
-    // with URL-containing title/body, reject server-side too.
     if (containsUrl(title) || containsUrl(body)) {
       error("Notification text contained a URL — rejected");
       return res.json(
@@ -212,6 +255,9 @@ async function handleSingleRecipient(payload, databases, ctx) {
     }
   }
 
+  // Counter bump runs regardless of notification prefs — the counter is
+  // visible to everyone (e.g. likeCount on a review). Prefs only control
+  // whether the AUTHOR gets notified about it.
   if (
     bumpCounter &&
     bumpCounter.reviewId &&
@@ -241,6 +287,16 @@ async function handleSingleRecipient(payload, databases, ctx) {
 
   if (isCounterOnly) {
     return res.json({ success: true, bumped: true, notified: false });
+  }
+
+  // ── Prefs check — bail out before creating doc/sending push ─────────────
+  const allowed = await shouldNotify(users, userId, type, log);
+  if (!allowed) {
+    return res.json({
+      success: true,
+      suppressed: true,
+      reason: "Recipient has notifications disabled for this type",
+    });
   }
 
   try {
@@ -314,7 +370,7 @@ async function handleSingleRecipient(payload, databases, ctx) {
 }
 
 // ─── Broadcast handler ───────────────────────────────────────────────────────
-async function handleBroadcast(payload, databases, ctx) {
+async function handleBroadcast(payload, databases, users, ctx) {
   const {
     DATABASE_ID,
     NOTIFICATIONS_COLLECTION_ID,
@@ -337,9 +393,6 @@ async function handleBroadcast(payload, databases, ctx) {
     );
   }
 
-  // Defense in depth — same as single-recipient. Admin shouldn't be posting
-  // links via push either; if they want to share a URL, it goes in the
-  // data.url field which deep-links into the app, not displayed text.
   if (containsUrl(title) || containsUrl(body)) {
     error("Broadcast text contained a URL — rejected");
     return res.json(
@@ -372,16 +425,31 @@ async function handleBroadcast(payload, databases, ctx) {
       userIdSet.add(doc.userId);
     }
   }
-  const userIds = Array.from(userIdSet);
-  log(`Broadcast targeting ${userIds.length} users`);
+  const allUserIds = Array.from(userIdSet);
+  log(`Broadcast considering ${allUserIds.length} users`);
+
+  // ── Filter by per-user prefs ────────────────────────────────────────────
+  // Sequentially batched so we don't blow Users API rate limits. At a few
+  // hundred users this is fine; if you scale past a few thousand,
+  // parallelize in chunks.
+  const eligibleUserIds = [];
+  let suppressed = 0;
+  for (const uid of allUserIds) {
+    const ok = await shouldNotify(users, uid, type, log);
+    if (ok) eligibleUserIds.push(uid);
+    else suppressed++;
+  }
+  log(
+    `Broadcast eligible: ${eligibleUserIds.length} / ${allUserIds.length} (${suppressed} suppressed by prefs)`,
+  );
 
   let notifsCreated = 0;
   let notifsFailed = 0;
   const dataStr = data ? JSON.stringify(data) : null;
 
   const NOTIF_CHUNK = 25;
-  for (let i = 0; i < userIds.length; i += NOTIF_CHUNK) {
-    const chunk = userIds.slice(i, i + NOTIF_CHUNK);
+  for (let i = 0; i < eligibleUserIds.length; i += NOTIF_CHUNK) {
+    const chunk = eligibleUserIds.slice(i, i + NOTIF_CHUNK);
     const results = await Promise.allSettled(
       chunk.map((uid) =>
         databases.createDocument(
@@ -412,13 +480,20 @@ async function handleBroadcast(payload, databases, ctx) {
   }
   log(`Notifications: ${notifsCreated} created, ${notifsFailed} failed`);
 
-  const tokens = await paginateAllDocuments(
+  // Push tokens — fetch only for eligible users so we don't push to
+  // suppressed recipients. Easiest path: pull all tokens, filter to
+  // those whose userId is in eligibleUserIds.
+  const allTokenDocs = await paginateAllDocuments(
     databases,
     DATABASE_ID,
     PUSH_TOKENS_COLLECTION_ID,
-    (doc) => doc.token,
+    (doc) => doc,
   );
-  log(`Broadcast sending to ${tokens.length} push tokens`);
+  const eligibleSet = new Set(eligibleUserIds);
+  const tokens = allTokenDocs
+    .filter((d) => eligibleSet.has(d.userId))
+    .map((d) => d.token);
+  log(`Broadcast sending to ${tokens.length} push tokens (filtered by prefs)`);
 
   if (tokens.length === 0) {
     return res.json({
@@ -426,7 +501,8 @@ async function handleBroadcast(payload, databases, ctx) {
       pushed: 0,
       notifsCreated,
       notifsFailed,
-      reason: "No push tokens registered",
+      suppressed,
+      reason: "No eligible push tokens",
     });
   }
 
@@ -465,7 +541,9 @@ async function handleBroadcast(payload, databases, ctx) {
   return res.json({
     success: true,
     broadcast: true,
-    targeted: userIds.length,
+    targeted: allUserIds.length,
+    eligible: eligibleUserIds.length,
+    suppressed,
     notifsCreated,
     notifsFailed,
     tokens: tokens.length,
@@ -503,9 +581,6 @@ async function handleModeration(payload, databases, ctx) {
     );
   }
 
-  // Count reports against this review. We use limit=1 because we only
-  // need the `total` field — Appwrite returns the full count of matching
-  // documents regardless of the page size.
   let totalReports;
   try {
     const result = await databases.listDocuments(
@@ -533,9 +608,6 @@ async function handleModeration(payload, databases, ctx) {
     });
   }
 
-  // Threshold met — hide the review. Idempotent: if it's already hidden,
-  // setting isHidden=true is a no-op. We don't bother reading the current
-  // value first since the write is cheap.
   try {
     await databases.updateDocument(
       DATABASE_ID,
