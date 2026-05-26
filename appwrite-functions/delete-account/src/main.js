@@ -191,12 +191,12 @@ export default async ({ req, res, log, error }) => {
     databases,
     env.DATABASE_ID,
     env.FOLLOWS_COLLECTION_ID,
-    "followeeId",
+    "followingId",
     callerUserId,
     log,
     error,
     summary.errors,
-    "follows(followee)",
+    "follows(following)",
   );
   summary.followsDeleted = followsFollower + followsFollowee;
 
