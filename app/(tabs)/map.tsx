@@ -1,18 +1,18 @@
 // app/(tabs)/map.tsx
 // Map View — full-screen map with restaurant markers.
 //
-// Marker strategy:
-//   Android: SVG teardrop with restaurant photo inside (clean, no clipping bug)
-//   iOS: circular photo marker with primary border
+// Markers (Uber Eats style):
+//   - Single restaurant → a round black dot (brand colour + larger when selected).
+//   - Nearby restaurants are CLUSTERED (supercluster) into a dark bubble showing
+//     the count; tapping a cluster zooms in to expand it.
+//   Each marker controls tracksViewChanges itself — tracking briefly so Android
+//   captures the painted view, then stopping. (The old code snapshotted before
+//   paint, which is why Android markers came out blank / not round.)
 //
 // Initial view priority:
 //   1. User's location (if granted) → centered at city-level zoom
 //   2. Average of restaurant locations → centered at city-level zoom
 //   3. Fallback to Jamaica region (initialRegion)
-//
-// (Future: circle markers on Android via react-native-view-shot snapshot.
-//  Deferred due to Windows symlink + Gradle 8 NDK build issue. Works fine
-//  on Mac/Linux — revisit when build environment changes or via EAS.)
 
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import BottomSheet, { BottomSheetView } from "@gorhom/bottom-sheet";
@@ -31,18 +31,22 @@ import {
 } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
-import Svg, { Circle, G, Path } from "react-native-svg";
+import Supercluster from "supercluster";
 
+import { MAP_STYLE_HIDE_BUSINESS_POIS } from "@/constants/mapStyle";
 import { listRestaurants } from "@/services/restaurants";
+import { getReviewStatsForRestaurants } from "@/services/reviews";
 import { getImagePreviewUrl } from "@/services/storage";
 import {
-  colors,
   fonts,
   radius,
   shadows,
   spacing,
   typographyTokens as T,
 } from "@/theme/colors";
+import { useTheme } from "@/theme/ThemeProvider";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 import type { Parish, Restaurant } from "@/types/restaurant";
 
 // ─── Conditional map import ───────────────────────────────────────────────────
@@ -79,212 +83,203 @@ const PARISH_LABELS: Record<Parish, string> = {
   st_catherine: "St. Catherine",
 };
 
-// ─── Marker dimensions ───────────────────────────────────────────────────────
-const MARKER_SIZE = 50;
-const BORDER_W = 3;
-const TOTAL = MARKER_SIZE + BORDER_W * 2;
+// ─── Map markers (Uber Eats-style dots + count clusters) ──────────────────────
+// tracksViewChanges stays TRUE so Android LIVE-renders the marker view instead
+// of snapshotting it to a bitmap — the snapshot was capturing a half-laid-out
+// (clipped) view. Clustering keeps the number of on-screen markers small, so the
+// extra render cost is fine. The marker child is also kept flat (no wrapper
+// nesting) to avoid Android mis-measuring the bounds.
 
-// ─── Android teardrop marker (SVG-based, no clipping bug) ─────────────────────
-function AndroidMarker({
-  isSelected,
-  onReady,
-}: {
-  isSelected: boolean;
-  onReady: () => void;
-}) {
-  useEffect(() => {
-    onReady();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+const DOT_BLACK = "#101010";
 
-  const d = isSelected ? 52 : 44;
-  const cx = d / 2;
-  const r = cx - 2;
-  const tip = d + d * 0.32;
-
-  return (
-    <Svg width={d} height={tip} viewBox={`0 0 ${d} ${tip}`}>
-      <Circle
-        cx={cx}
-        cy={cx}
-        r={r}
-        fill={colors.primary}
-        stroke={colors.cardBackground}
-        strokeWidth={isSelected ? 3 : 2}
-      />
-      <Path
-        d={`M ${cx - 5} ${d - 5} L ${cx} ${tip - 2} L ${cx + 5} ${d - 5} Z`}
-        fill={colors.primary}
-      />
-      {/* Fork + knife icon */}
-      <G transform={`translate(${cx - 6}, ${cx - 8})`}>
-        <Path
-          d="M2 0 L2 14 M0 0 L4 0 L4 5 Q2 7 0 5 L0 0"
-          stroke={colors.cardBackground}
-          strokeWidth={1.6}
-          fill="none"
-          strokeLinecap="round"
-        />
-        <Path
-          d="M10 0 Q14 3 14 6 L10 8 L10 14"
-          stroke={colors.cardBackground}
-          strokeWidth={1.6}
-          fill="none"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </G>
-    </Svg>
-  );
+interface LatLng {
+  latitude: number;
+  longitude: number;
 }
 
-// ─── iOS circular photo marker ────────────────────────────────────────────────
-function IOSMarker({
-  imageUrl,
-  isSelected,
-  onReady,
+// Pick a category icon for a restaurant from its cuisines/categories.
+function iconForRestaurant(
+  r: Restaurant,
+): keyof typeof MaterialCommunityIcons.glyphMap {
+  const t = [...r.cuisines, ...r.categories].join(" ").toLowerCase();
+  if (/jerk|bbq|barbecue|grill|smok/.test(t)) return "grill";
+  if (/burger/.test(t)) return "hamburger";
+  if (/seafood|fish|lobster|shrimp|crab/.test(t)) return "fish";
+  if (/chicken|wing|fried/.test(t)) return "food-drumstick";
+  if (/pizza/.test(t)) return "pizza";
+  if (/patty|patties|bakery|bread|pastry|baked/.test(t)) return "food-croissant";
+  if (/ital|vegan|vegetarian|salad|healthy/.test(t)) return "leaf";
+  if (/sweet|dessert|cake|ice.?cream|gelato/.test(t)) return "cupcake";
+  if (/coffee|cafe|espresso|tea/.test(t)) return "coffee";
+  if (/bar|cocktail|drink|rum|beer/.test(t)) return "glass-cocktail";
+  return "silverware-fork-knife";
+}
+
+// A single restaurant — a round black dot (brand-coloured + larger when selected).
+function DotMarker({
+  coordinate,
+  icon,
+  selected,
+  onPress,
 }: {
-  imageUrl: string | null;
-  isSelected: boolean;
-  onReady: () => void;
+  coordinate: LatLng;
+  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  selected: boolean;
+  onPress: () => void;
 }) {
-  useEffect(() => {
-    if (!imageUrl) onReady();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imageUrl]);
-
-  const scale = isSelected ? 1.15 : 1;
-  const total = TOTAL * scale;
-  const inner = MARKER_SIZE * scale;
-
+  const { colors } = useTheme();
+  const size = selected ? 40 : 32;
   return (
-    <View
-      style={{
-        width: total,
-        height: total,
-        borderRadius: total / 2,
-        borderWidth: BORDER_W,
-        borderColor: colors.primary,
-        backgroundColor: colors.primary,
-        overflow: "hidden",
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.4,
-        shadowRadius: 5,
-        alignItems: "center",
-        justifyContent: "center",
-      }}
+    <Marker
+      coordinate={coordinate}
+      onPress={onPress}
+      tracksViewChanges
+      anchor={{ x: 0.5, y: 0.5 }}
     >
-      {imageUrl ? (
-        <ExpoImage
-          source={{ uri: imageUrl }}
-          style={{
-            width: inner,
-            height: inner,
-            borderRadius: inner / 2,
-          }}
-          contentFit="cover"
-          priority="high"
-          cachePolicy="memory-disk"
-          onLoad={() => onReady()}
-          onError={() => onReady()}
-        />
-      ) : (
+      <View
+        style={[
+          markerStyles.dot,
+          {
+            width: size,
+            height: size,
+            borderRadius: size / 2,
+            backgroundColor: selected ? colors.primary : DOT_BLACK,
+          },
+        ]}
+      >
         <MaterialCommunityIcons
-          name="silverware-fork-knife"
-          size={22}
-          color={colors.cardBackground}
+          name={icon}
+          size={Math.round(size * 0.55)}
+          color="#FFFFFF"
         />
-      )}
-    </View>
+      </View>
+    </Marker>
   );
 }
 
-function RestaurantMarker({
-  imageUrl,
-  isSelected,
-  onReady,
+// A cluster of nearby restaurants — a white pill with a cutlery icon + count.
+function ClusterMarker({
+  coordinate,
+  label,
+  onPress,
 }: {
-  imageUrl: string | null;
-  isSelected: boolean;
-  onReady: () => void;
+  coordinate: LatLng;
+  label: string;
+  onPress: () => void;
 }) {
-  if (Platform.OS === "android") {
-    return <AndroidMarker isSelected={isSelected} onReady={onReady} />;
+  // A bigger version of the dot (which renders fine on Android) with the count
+  // inside. Grows with the label so longer numbers stay centred.
+  // iOS renders multi-child markers fine → use the white pill (cutlery + count).
+  if (Platform.OS === "ios") {
+    return (
+      <Marker
+        coordinate={coordinate}
+        onPress={onPress}
+        tracksViewChanges
+        anchor={{ x: 0.5, y: 0.5 }}
+      >
+        <View style={markerStyles.clusterPill}>
+          <MaterialCommunityIcons
+            name="silverware-fork-knife"
+            size={16}
+            color={DOT_BLACK}
+          />
+          <Text style={markerStyles.clusterPillText}>{label}</Text>
+        </View>
+      </Marker>
+    );
   }
+
+  // Android — number-only black circle (pill / multi-child markers clip there).
+  const size = label.length <= 2 ? 38 : label.length <= 3 ? 44 : 52;
   return (
-    <IOSMarker imageUrl={imageUrl} isSelected={isSelected} onReady={onReady} />
+    <Marker
+      coordinate={coordinate}
+      onPress={onPress}
+      tracksViewChanges
+      anchor={{ x: 0.5, y: 0.5 }}
+    >
+      <View
+        style={[
+          markerStyles.cluster,
+          { width: size, height: size, borderRadius: size / 2 },
+        ]}
+      >
+        <Text style={markerStyles.clusterText}>{label}</Text>
+      </View>
+    </Marker>
   );
 }
+
+const markerStyles = StyleSheet.create({
+  // Single restaurant — a black circle with a category icon (no elevation;
+  // Android clips elevated marker snapshots).
+  dot: {
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  // Cluster — a bigger black circle with just the count.
+  cluster: {
+    backgroundColor: DOT_BLACK,
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  clusterText: {
+    color: "#FFFFFF",
+    fontFamily: fonts.bold,
+    fontSize: T.size.sm,
+  },
+  // iOS cluster — white pill with a cutlery icon + count (from the design).
+  clusterPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderRadius: radius.full,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.06)",
+    ...shadows.md,
+  },
+  clusterPillText: {
+    color: DOT_BLACK,
+    fontFamily: fonts.bold,
+    fontSize: T.size.base,
+    marginLeft: 5,
+  },
+});
 
 // ─── Action Button ────────────────────────────────────────────────────────────
-function ActionButton({
+// Quick-action tile in the bottom sheet (icon + label) — mirrors the detail
+// page's quick actions so the two screens feel of a piece.
+function SheetTile({
   icon,
   label,
   onPress,
-  variant = "outline",
 }: {
   icon: keyof typeof MaterialCommunityIcons.glyphMap;
-  label?: string;
+  label: string;
   onPress: () => void;
-  variant?: "filled" | "outline";
 }) {
+  const { styles: sheetStyles, colors } = useThemedStyles(makeSheetStyles);
   return (
     <Pressable
       onPress={onPress}
-      style={[
-        actionStyles.btn,
-        variant === "filled" ? actionStyles.btnFilled : actionStyles.btnOutline,
-        !label && actionStyles.btnIcon,
-      ]}
+      style={sheetStyles.tile}
+      accessibilityRole="button"
+      accessibilityLabel={label}
     >
-      <MaterialCommunityIcons
-        name={icon}
-        size={18}
-        color={variant === "filled" ? colors.cardBackground : colors.primary}
-      />
-      {label ? (
-        <Text
-          style={[
-            actionStyles.label,
-            variant === "filled" && actionStyles.labelFilled,
-          ]}
-        >
-          {label}
-        </Text>
-      ) : null}
+      <MaterialCommunityIcons name={icon} size={20} color={colors.primary} />
+      <Text style={sheetStyles.tileLabel} numberOfLines={1}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
-
-const actionStyles = StyleSheet.create({
-  btn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    borderRadius: radius.lg,
-    paddingVertical: 12,
-    paddingHorizontal: spacing.lg,
-  },
-  btnFilled: {
-    backgroundColor: colors.primary,
-    flex: 1,
-    ...shadows.sm,
-  },
-  btnOutline: {
-    backgroundColor: colors.pageBackground,
-    borderWidth: 1,
-    borderColor: colors.divider,
-    paddingHorizontal: spacing.md,
-  },
-  btnIcon: { paddingHorizontal: 14 },
-  label: {
-    fontFamily: fonts.bold,
-    fontSize: T.size.base,
-    color: colors.primary,
-  },
-  labelFilled: { color: colors.cardBackground },
-});
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
@@ -301,6 +296,8 @@ const CITY_DELTA = 0.08;
 
 export default function MapScreen() {
   const router = useRouter();
+  const { styles: screenStyles, colors } = useThemedStyles(makeScreenStyles);
+  const sheetStyles = useThemedStyles(makeSheetStyles).styles;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapRef = useRef<any>(null);
   const bottomSheetRef = useRef<BottomSheet>(null);
@@ -312,11 +309,77 @@ export default function MapScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [userLocation, setUserLocation] =
     useState<Location.LocationObject | null>(null);
-  const [loadedMarkerIds, setLoadedMarkerIds] = useState<Set<string>>(
-    new Set(),
-  );
+  // Current visible region — drives clustering (recomputed as the user pans/zooms).
+  const [region, setRegion] = useState(JAMAICA_REGION);
 
   const snapPoints = useMemo(() => ["42%", "72%"], []);
+
+  const restaurantById = useMemo(() => {
+    const m = new Map<string, Restaurant>();
+    for (const r of restaurants) m.set(r.id, r);
+    return m;
+  }, [restaurants]);
+
+  // Build the cluster index from the restaurant points.
+  const clusterIndex = useMemo(() => {
+    const index = new Supercluster({ radius: 60, maxZoom: 16, minPoints: 2 });
+    index.load(
+      restaurants.map((r) => ({
+        type: "Feature" as const,
+        properties: { restaurantId: r.id },
+        geometry: {
+          type: "Point" as const,
+          coordinates: [r.longitude, r.latitude] as [number, number],
+        },
+      })),
+    );
+    return index;
+  }, [restaurants]);
+
+  // Clusters / individual points visible in the current region + zoom.
+  const clusters = useMemo(() => {
+    const { longitude, latitude, longitudeDelta, latitudeDelta } = region;
+    const bbox: [number, number, number, number] = [
+      longitude - longitudeDelta / 2,
+      latitude - latitudeDelta / 2,
+      longitude + longitudeDelta / 2,
+      latitude + latitudeDelta / 2,
+    ];
+    const zoom = Math.min(
+      20,
+      Math.max(0, Math.round(Math.log2(360 / longitudeDelta))),
+    );
+    try {
+      return clusterIndex.getClusters(bbox, zoom);
+    } catch {
+      return [];
+    }
+  }, [clusterIndex, region]);
+
+  // Tapping a cluster zooms to the level where it expands.
+  const handleClusterPress = useCallback(
+    (clusterId: number, lat: number, lng: number) => {
+      try {
+        const expansionZoom = Math.min(
+          clusterIndex.getClusterExpansionZoom(clusterId),
+          18,
+        );
+        const delta = 360 / Math.pow(2, expansionZoom);
+        mapRef.current?.animateToRegion(
+          {
+            latitude: lat,
+            longitude: lng,
+            latitudeDelta: delta,
+            longitudeDelta: delta,
+          },
+          400,
+        );
+      } catch {
+        // ignore
+      }
+    },
+    [clusterIndex],
+  );
 
   // Decide what initial view to show. Priority order:
   //   1. User's location (if granted) → centered at city-level zoom
@@ -406,7 +469,27 @@ export default function MapScreen() {
 
       if (cancelled) return;
 
-      setRestaurants(page.items);
+      // Merge LIVE review stats — the doc's averageRating/reviewCount are stale
+      // (no Cloud Function maintains them), so the rating wouldn't show on the
+      // bottom sheet otherwise. Best-effort: keep the doc values on failure.
+      let items = page.items;
+      try {
+        const statsMap = await getReviewStatsForRestaurants(
+          items.map((r) => r.id),
+        );
+        items = items.map((r) => {
+          const s = statsMap.get(r.id);
+          return s
+            ? { ...r, averageRating: s.average, reviewCount: s.count }
+            : r;
+        });
+      } catch (err) {
+        console.warn("[map] failed to load review stats:", err);
+      }
+
+      if (cancelled) return;
+
+      setRestaurants(items);
       if (loc) setUserLocation(loc);
       setIsLoading(false);
 
@@ -414,7 +497,7 @@ export default function MapScreen() {
       if (!hasSetInitialViewRef.current) {
         hasSetInitialViewRef.current = true;
         setTimeout(() => {
-          if (!cancelled) setInitialView(page.items, loc);
+          if (!cancelled) setInitialView(items, loc);
         }, 400);
       }
     })();
@@ -451,15 +534,6 @@ export default function MapScreen() {
     }
   }, [userLocation]);
 
-  const handleMarkerReady = useCallback((restaurantId: string) => {
-    setLoadedMarkerIds((prev) => {
-      if (prev.has(restaurantId)) return prev;
-      const next = new Set(prev);
-      next.add(restaurantId);
-      return next;
-    });
-  }, []);
-
   const openDirections = useCallback(
     (lat: number, lng: number, name: string) => {
       const encoded = encodeURIComponent(name);
@@ -480,7 +554,7 @@ export default function MapScreen() {
     return (
       <SafeAreaView style={screenStyles.center} edges={["top"]}>
         <MaterialCommunityIcons
-          name="map-off"
+          name="map-marker-off"
           size={48}
           color={colors.textMuted}
         />
@@ -508,29 +582,39 @@ export default function MapScreen() {
         ref={mapRef}
         style={StyleSheet.absoluteFillObject}
         provider={PROVIDER_DEFAULT}
+        customMapStyle={MAP_STYLE_HIDE_BUSINESS_POIS}
+        showsPointsOfInterest={false}
         initialRegion={JAMAICA_REGION}
+        onRegionChangeComplete={(r: typeof JAMAICA_REGION) => setRegion(r)}
         showsUserLocation
         showsMyLocationButton={false}
         toolbarEnabled={false}
       >
-        {restaurants.map((restaurant) => (
-          <Marker
-            key={restaurant.id}
-            coordinate={{
-              latitude: restaurant.latitude,
-              longitude: restaurant.longitude,
-            }}
-            onPress={() => handleMarkerPress(restaurant)}
-            tracksViewChanges={!loadedMarkerIds.has(restaurant.id)}
-            anchor={{ x: 0.5, y: 0.5 }}
-          >
-            <RestaurantMarker
-              imageUrl={coverUrl(restaurant)}
-              isSelected={selectedRestaurant?.id === restaurant.id}
-              onReady={() => handleMarkerReady(restaurant.id)}
+        {clusters.map((c) => {
+          const [lng, lat] = c.geometry.coordinates;
+          const props = c.properties;
+          if (props.cluster) {
+            return (
+              <ClusterMarker
+                key={`cluster-${props.cluster_id}`}
+                coordinate={{ latitude: lat, longitude: lng }}
+                label={String(props.point_count_abbreviated)}
+                onPress={() => handleClusterPress(props.cluster_id, lat, lng)}
+              />
+            );
+          }
+          const restaurant = restaurantById.get(props.restaurantId);
+          if (!restaurant) return null;
+          return (
+            <DotMarker
+              key={restaurant.id}
+              coordinate={{ latitude: lat, longitude: lng }}
+              icon={iconForRestaurant(restaurant)}
+              selected={selectedRestaurant?.id === restaurant.id}
+              onPress={() => handleMarkerPress(restaurant)}
             />
-          </Marker>
-        ))}
+          );
+        })}
       </MapView>
 
       <SafeAreaView
@@ -604,55 +688,44 @@ export default function MapScreen() {
                 </View>
               )}
 
-              <Pressable
-                style={sheetStyles.nameRow}
-                onPress={() => {
-                  bottomSheetRef.current?.close();
-                  router.push(`/restaurant/${selectedRestaurant.id}`);
-                }}
-                accessibilityRole="button"
-                accessibilityLabel={`View ${selectedRestaurant.name} details`}
-              >
-                <Text style={sheetStyles.name} numberOfLines={1}>
-                  {selectedRestaurant.name}
-                </Text>
-                <View style={sheetStyles.viewBtn}>
-                  <MaterialCommunityIcons
-                    name="chevron-right"
-                    size={18}
-                    color={colors.primary}
-                  />
-                </View>
-              </Pressable>
+              <Text style={sheetStyles.name} numberOfLines={2}>
+                {selectedRestaurant.name}
+              </Text>
 
-              <View style={sheetStyles.tagRow}>
-                {selCuisine ? (
-                  <View style={sheetStyles.tag}>
-                    <Text style={sheetStyles.tagText}>{selCuisine}</Text>
-                  </View>
-                ) : null}
-                {selParish ? (
-                  <View style={sheetStyles.tagOutline}>
-                    <MaterialCommunityIcons
-                      name="map-marker"
-                      size={12}
-                      color={colors.textMuted}
-                    />
-                    <Text style={sheetStyles.tagOutlineText}>{selParish}</Text>
-                  </View>
-                ) : null}
+              {/* Rating · price · cuisine */}
+              <View style={sheetStyles.metaRow}>
                 {selectedRestaurant.reviewCount > 0 ? (
-                  <View style={sheetStyles.tagOutline}>
+                  <View style={sheetStyles.ratingPill}>
                     <MaterialCommunityIcons
                       name="star"
-                      size={12}
+                      size={13}
                       color={colors.star}
                     />
-                    <Text style={sheetStyles.tagOutlineText}>
-                      {selectedRestaurant.averageRating.toFixed(1)} (
-                      {selectedRestaurant.reviewCount})
+                    <Text style={sheetStyles.ratingValue}>
+                      {selectedRestaurant.averageRating.toFixed(1)}
+                    </Text>
+                    <Text style={sheetStyles.ratingCount}>
+                      ({selectedRestaurant.reviewCount})
                     </Text>
                   </View>
+                ) : (
+                  <View style={sheetStyles.newPill}>
+                    <Text style={sheetStyles.newPillText}>New</Text>
+                  </View>
+                )}
+                {selectedRestaurant.priceRange ? (
+                  <>
+                    <Text style={sheetStyles.metaDot}>·</Text>
+                    <Text style={sheetStyles.metaText}>
+                      {selectedRestaurant.priceRange}
+                    </Text>
+                  </>
+                ) : null}
+                {selCuisine ? (
+                  <>
+                    <Text style={sheetStyles.metaDot}>·</Text>
+                    <Text style={sheetStyles.metaText}>{selCuisine}</Text>
+                  </>
                 ) : null}
               </View>
 
@@ -660,11 +733,12 @@ export default function MapScreen() {
                 <View style={sheetStyles.infoRow}>
                   <MaterialCommunityIcons
                     name="map-marker-outline"
-                    size={15}
-                    color={colors.textMuted}
+                    size={16}
+                    color={colors.primary}
                   />
                   <Text style={sheetStyles.infoText} numberOfLines={2}>
                     {selectedRestaurant.address}
+                    {selParish ? `, ${selParish}` : ""}
                   </Text>
                 </View>
               ) : null}
@@ -675,11 +749,11 @@ export default function MapScreen() {
                 </Text>
               ) : null}
 
-              <View style={sheetStyles.actionRow}>
-                <ActionButton
+              {/* Quick actions */}
+              <View style={sheetStyles.quickRow}>
+                <SheetTile
                   icon="directions"
-                  label="Get Directions"
-                  variant="filled"
+                  label="Directions"
                   onPress={() =>
                     openDirections(
                       selectedRestaurant.latitude,
@@ -689,18 +763,18 @@ export default function MapScreen() {
                   }
                 />
                 {selectedRestaurant.phoneNumber ? (
-                  <ActionButton
+                  <SheetTile
                     icon="phone"
-                    variant="outline"
+                    label="Call"
                     onPress={() =>
                       Linking.openURL(`tel:${selectedRestaurant.phoneNumber}`)
                     }
                   />
                 ) : null}
                 {selectedRestaurant.websiteUrl ? (
-                  <ActionButton
-                    icon="earth"
-                    variant="outline"
+                  <SheetTile
+                    icon="web"
+                    label="Website"
                     onPress={() => {
                       const url = selectedRestaurant.websiteUrl ?? "";
                       const full = url.startsWith("http")
@@ -711,6 +785,24 @@ export default function MapScreen() {
                   />
                 ) : null}
               </View>
+
+              {/* View details CTA */}
+              <Pressable
+                style={sheetStyles.viewBtn}
+                onPress={() => {
+                  bottomSheetRef.current?.close();
+                  router.push(`/restaurant/${selectedRestaurant.id}`);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={`View ${selectedRestaurant.name} details`}
+              >
+                <Text style={sheetStyles.viewBtnText}>View full details</Text>
+                <MaterialCommunityIcons
+                  name="arrow-right"
+                  size={18}
+                  color={colors.textInverse}
+                />
+              </Pressable>
             </Animated.View>
           ) : null}
         </BottomSheetView>
@@ -720,7 +812,9 @@ export default function MapScreen() {
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const screenStyles = StyleSheet.create({
+function makeScreenStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   container: { flex: 1 },
   center: {
     flex: 1,
@@ -782,20 +876,21 @@ const screenStyles = StyleSheet.create({
     borderColor: colors.divider,
     ...shadows.md,
   },
-});
+  });
+}
 
-const sheetStyles = StyleSheet.create({
+function makeSheetStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   background: {
     backgroundColor: colors.cardBackground,
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
-    borderWidth: 1,
-    borderColor: colors.divider,
   },
   handle: {
     width: 40,
     height: 4,
-    backgroundColor: colors.divider,
+    backgroundColor: colors.border,
     borderRadius: radius.full,
   },
   content: {
@@ -806,99 +901,122 @@ const sheetStyles = StyleSheet.create({
   },
   image: {
     width: "100%",
-    height: 180,
-    borderRadius: radius.xl,
+    height: 170,
+    borderRadius: radius.lg,
     marginBottom: spacing.lg,
-    backgroundColor: colors.pageBackground,
+    backgroundColor: colors.surface,
   },
-  imagePlaceholder: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  nameRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: spacing.md,
-  },
+  imagePlaceholder: { alignItems: "center", justifyContent: "center" },
   name: {
     fontFamily: fonts.black,
     fontSize: T.size.xxl,
     color: colors.textPrimary,
     letterSpacing: T.tracking.tight,
-    flex: 1,
+    marginBottom: spacing.sm,
   },
-  viewBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: radius.full,
-    backgroundColor: colors.primaryLight,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: colors.primary,
-    marginLeft: spacing.sm,
-  },
-  tagRow: {
+  metaRow: {
     flexDirection: "row",
-    gap: spacing.sm,
-    marginBottom: spacing.xl,
+    alignItems: "center",
     flexWrap: "wrap",
+    gap: spacing.sm,
+    marginBottom: spacing.md,
   },
-  tag: {
-    backgroundColor: colors.primaryLight,
-    borderRadius: radius.full,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 5,
-    borderWidth: 1,
-    borderColor: colors.primary,
-  },
-  tagText: {
-    fontFamily: fonts.bold,
-    fontSize: T.size.xs,
-    color: colors.primary,
-    letterSpacing: T.tracking.wider,
-    textTransform: "capitalize",
-  },
-  tagOutline: {
+  ratingPill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    backgroundColor: colors.pageBackground,
+    backgroundColor: colors.surface,
     borderRadius: radius.full,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 5,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: 4,
     borderWidth: 1,
-    borderColor: colors.divider,
+    borderColor: colors.border,
   },
-  tagOutlineText: {
+  ratingValue: {
+    fontFamily: fonts.bold,
+    fontSize: T.size.sm,
+    color: colors.textPrimary,
+  },
+  ratingCount: {
     fontFamily: fonts.regular,
     fontSize: T.size.xs,
     color: colors.textMuted,
   },
-  actionRow: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    alignItems: "center",
+  newPill: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  newPillText: {
+    fontFamily: fonts.bold,
+    fontSize: T.size.xs,
+    color: colors.textSecondary,
+  },
+  metaDot: { color: colors.textMuted, fontSize: T.size.sm },
+  metaText: {
+    fontFamily: fonts.medium,
+    fontSize: T.size.sm,
+    color: colors.textSecondary,
+    textTransform: "capitalize",
   },
   infoRow: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 6,
-    marginBottom: spacing.sm,
+    gap: spacing.sm,
+    marginBottom: spacing.md,
   },
   infoText: {
-    fontFamily: fonts.regular,
-    fontSize: T.size.sm,
-    color: colors.textMuted,
     flex: 1,
-    lineHeight: T.leading.normal,
+    fontFamily: fonts.regular,
+    fontSize: T.size.subDetail,
+    color: colors.textSecondary,
+    lineHeight: 21,
   },
   description: {
     fontFamily: fonts.regular,
-    fontSize: T.size.sm,
+    fontSize: T.size.base,
     color: colors.textSecondary,
-    lineHeight: T.leading.normal,
+    lineHeight: 22,
     marginBottom: spacing.lg,
   },
-});
+  quickRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  tile: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    paddingVertical: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  tileLabel: {
+    fontFamily: fonts.medium,
+    fontSize: T.size.xs,
+    color: colors.textPrimary,
+  },
+  viewBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    height: 52,
+    borderRadius: radius.lg,
+    backgroundColor: colors.primary,
+    ...shadows.sm,
+  },
+  viewBtnText: {
+    fontFamily: fonts.bold,
+    fontSize: T.size.base,
+    color: colors.textInverse,
+  },
+  });
+}

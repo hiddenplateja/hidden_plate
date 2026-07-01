@@ -30,18 +30,19 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { CategoryChips } from "@/components/CategoryChips";
 import { RestaurantImageCard } from "@/components/RestaurantImageCard";
 import { listRestaurants } from "@/services/restaurants";
 import { getReviewStatsForRestaurants } from "@/services/reviews";
 import {
-  colors,
   fonts,
   radius,
   shadows,
-  size,
   spacing,
   typographyTokens as T,
 } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 import type {
   Restaurant,
   RestaurantFilters,
@@ -49,16 +50,6 @@ import type {
 } from "@/types/restaurant";
 
 const PAGE_SIZE = 20;
-
-// ─── Category chips (same as home) ───────────────────────────────────────────
-const CATEGORIES = [
-  { id: "all", label: "All", icon: "silverware-fork-knife" },
-  { id: "jerk", label: "Jerk", icon: "fire" },
-  { id: "seafood", label: "Seafood", icon: "fish" },
-  { id: "patties", label: "Patties", icon: "pie" },
-  { id: "ital", label: "Ital", icon: "leaf" },
-  { id: "sweets", label: "Sweets", icon: "cupcake" },
-] as const;
 
 // ─── Type configuration ──────────────────────────────────────────────────────
 interface TypeConfig {
@@ -122,6 +113,7 @@ export default function RestaurantListScreen() {
   const { type } = useLocalSearchParams<{ type: string }>();
   const router = useRouter();
   const config = TYPE_CONFIG[type ?? ""];
+  const { styles, colors } = useThemedStyles(makeStyles);
 
   const [state, setState] = useState<ViewState>({ status: "loading" });
   const [refreshing, setRefreshing] = useState(false);
@@ -308,7 +300,7 @@ export default function RestaurantListScreen() {
           <MaterialCommunityIcons
             name="magnify"
             size={20}
-            color={colors.textMuted}
+            color={colors.textSecondary}
             style={{ marginRight: spacing.sm }}
           />
           <TextInput
@@ -330,19 +322,11 @@ export default function RestaurantListScreen() {
           ) : null}
         </View>
 
-        <FlatList
-          horizontal
-          data={CATEGORIES}
-          keyExtractor={(item) => item.id}
-          showsHorizontalScrollIndicator={false}
+        <CategoryChips
+          activeId={activeCategory}
+          onSelect={setActiveCategory}
+          compact
           contentContainerStyle={styles.chipsContent}
-          renderItem={({ item }) => (
-            <CategoryChip
-              item={item}
-              isActive={activeCategory === item.id}
-              onPress={() => setActiveCategory(item.id)}
-            />
-          )}
         />
       </View>
 
@@ -423,6 +407,7 @@ function Header({
   count?: number;
   onBack: () => void;
 }) {
+  const { styles, colors } = useThemedStyles(makeStyles);
   return (
     <View style={styles.header}>
       <Pressable
@@ -456,40 +441,12 @@ function Header({
   );
 }
 
-// ─── Category chip ───────────────────────────────────────────────────────────
-
-function CategoryChip({
-  item,
-  isActive,
-  onPress,
-}: {
-  item: (typeof CATEGORIES)[number];
-  isActive: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={[chipStyles.chip, isActive && chipStyles.chipActive]}
-    >
-      <MaterialCommunityIcons
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        name={item.icon as any}
-        size={14}
-        color={isActive ? colors.textInverse : colors.textMuted}
-        style={{ marginRight: 5 }}
-      />
-      <Text style={[chipStyles.label, isActive && chipStyles.labelActive]}>
-        {item.label}
-      </Text>
-    </Pressable>
-  );
-}
-
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.pageBackground },
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
+  safe: { flex: 1, backgroundColor: colors.background },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -526,29 +483,32 @@ const styles = StyleSheet.create({
     paddingTop: spacing.sm,
     paddingBottom: spacing.md,
   },
+  // Elevated white pill — matches the home (index) page search bar.
   searchBar: {
+    height: 52,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: colors.pageBackground,
-    borderRadius: radius.lg,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
+    backgroundColor: colors.cardBackground,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.lg,
     marginBottom: spacing.md,
     borderWidth: 1,
     borderColor: colors.divider,
+    ...shadows.sm,
   },
   searchInput: {
     flex: 1,
     fontFamily: fonts.regular,
     fontSize: T.size.base,
     color: colors.textPrimary,
+    padding: 0,
   },
   chipsContent: {
     gap: spacing.sm,
     paddingBottom: spacing.xs,
   },
 
-  divider: { height: 1, backgroundColor: colors.divider },
+  divider: { height: 1, backgroundColor: colors.border },
 
   center: {
     flex: 1,
@@ -624,31 +584,5 @@ const styles = StyleSheet.create({
   footerLoader: {
     paddingVertical: spacing.lg,
   },
-});
-
-const chipStyles = StyleSheet.create({
-  chip: {
-    flexDirection: "row",
-    alignItems: "center",
-    height: size.chipHeight,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.full,
-    backgroundColor: colors.pageBackground,
-    borderWidth: 1,
-    borderColor: colors.divider,
-  },
-  chipActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-    ...shadows.sm,
-  },
-  label: {
-    fontFamily: fonts.medium,
-    fontSize: T.size.sm,
-    color: colors.textMuted,
-  },
-  labelActive: {
-    fontFamily: fonts.bold,
-    color: colors.textInverse,
-  },
-});
+  });
+}

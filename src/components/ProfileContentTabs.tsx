@@ -1,48 +1,66 @@
 // src/components/ProfileContentTabs.tsx
-// Icon-only tab strip used on profile screens to switch between:
+// Tab strip used on profile screens to switch between:
 //   - reviews ("all"): the user's own reviews
 //   - likes:           reviews the user has liked
-//   - saved:           restaurants the user has saved
+//   - saved:           restaurants the user has saved  (own profile only)
 //
-// Visual style mirrors Community + Saved: large tap target with a centered
-// icon, a small underline bar beneath that's transparent when inactive and
-// blue when active. No labels — icons only, per design.
+// Icon + label tabs with an active underline indicator. The bar has clear
+// breathing room above it (from the header's bottom padding) and a single
+// bottom hairline so it reads as its own band — it never visually collides
+// with the stats above or the first review card below (the parent adds a
+// spacer beneath this bar so the first card doesn't jam the hairline).
 //
-// Right now only the "all" tab actually has wired-up data in ProfileView.
-// The other two render their own empty placeholder for now; we'll wire the
-// data layer in a follow-up.
+// Saved is private (per-doc Read scoped to the owner only), so the tab is
+// hidden entirely when viewing someone else's profile.
 
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Pressable, StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { colors, radius, spacing } from "@/theme/colors";
+import { fonts, radius, spacing, typographyTokens as T } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 
-export type ProfileContentTab = "all" | "likes" | "saved";
+export type ProfileContentTab = "all" | "likes" | "lists" | "saved";
 
 interface ProfileContentTabsProps {
   active: ProfileContentTab;
   onChange: (tab: ProfileContentTab) => void;
+  /**
+   * When false, the Saved tab is hidden. Other users' saved lists are
+   * private by design — the data layer enforces this too.
+   */
+  isOwn?: boolean;
+  /** When false, the Lists (Collections) tab is hidden (feature disabled). */
+  showLists?: boolean;
 }
 
 interface TabSpec {
   id: ProfileContentTab;
   icon: keyof typeof MaterialCommunityIcons.glyphMap;
-  label: string; // for a11y only — not displayed
+  label: string;
 }
 
-const TABS: TabSpec[] = [
-  { id: "all", icon: "grid", label: "All reviews" },
-  { id: "likes", icon: "heart-outline", label: "Liked reviews" },
-  { id: "saved", icon: "bookmark-outline", label: "Saved restaurants" },
+const ALL_TABS: TabSpec[] = [
+  { id: "all", icon: "grid", label: "Reviews" },
+  { id: "likes", icon: "heart-outline", label: "Likes" },
+  { id: "lists", icon: "bookmark-multiple-outline", label: "Lists" },
+  { id: "saved", icon: "bookmark-outline", label: "Saved" },
 ];
 
 export function ProfileContentTabs({
   active,
   onChange,
+  isOwn = true,
+  showLists = true,
 }: ProfileContentTabsProps) {
+  const tabs = ALL_TABS.filter(
+    (t) => (t.id !== "saved" || isOwn) && (t.id !== "lists" || showLists),
+  );
+  const { styles, colors } = useThemedStyles(makeStyles);
+
   return (
     <View style={styles.bar}>
-      {TABS.map((tab) => {
+      {tabs.map((tab) => {
         const isActive = active === tab.id;
         return (
           <Pressable
@@ -54,12 +72,16 @@ export function ProfileContentTabs({
             accessibilityLabel={tab.label}
             hitSlop={4}
           >
-            <MaterialCommunityIcons
-              name={tab.icon}
-              size={22}
-              color={isActive ? colors.textPrimary : colors.textMuted}
-              style={styles.icon}
-            />
+            <View style={styles.tabInner}>
+              <MaterialCommunityIcons
+                name={tab.icon}
+                size={19}
+                color={isActive ? colors.primary : colors.textMuted}
+              />
+              <Text style={[styles.label, isActive && styles.labelActive]}>
+                {tab.label}
+              </Text>
+            </View>
             <View
               style={[styles.underline, isActive && styles.underlineActive]}
             />
@@ -70,30 +92,48 @@ export function ProfileContentTabs({
   );
 }
 
-const styles = StyleSheet.create({
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   bar: {
     flexDirection: "row",
     backgroundColor: colors.cardBackground,
-    borderTopWidth: StyleSheet.hairlineWidth,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.divider,
+    borderBottomColor: colors.divider,
   },
   tab: {
     flex: 1,
     alignItems: "center",
-    paddingTop: spacing.md,
-    paddingBottom: 0,
   },
-  icon: { marginBottom: spacing.sm },
-  // Underline bar — always present so the icon doesn't shift on selection.
-  // Transparent when inactive, primary color when active.
+  // Icon + label sit on one centered row; vertical padding gives the bar a
+  // comfortable height so it reads as its own section.
+  tabInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs + 2,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm + 2,
+  },
+  label: {
+    fontFamily: fonts.medium,
+    fontSize: T.size.sm,
+    color: colors.textMuted,
+  },
+  labelActive: {
+    fontFamily: fonts.bold,
+    color: colors.textPrimary,
+  },
+  // Full-width indicator beneath the active tab (Material-style). Transparent
+  // when inactive so the icon/label never shift on selection.
   underline: {
-    height: 3,
-    width: 36,
-    borderRadius: radius.sm,
+    height: 2.5,
+    width: "100%",
     backgroundColor: "transparent",
+    borderTopLeftRadius: radius.sm,
+    borderTopRightRadius: radius.sm,
   },
   underlineActive: {
     backgroundColor: colors.primary,
   },
-});
+  });
+}

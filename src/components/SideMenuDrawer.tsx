@@ -1,35 +1,22 @@
 // src/components/SideMenuDrawer.tsx
-// Right-side slide-in drawer menu.
-// Used for the profile tab's hamburger menu.
+// Right-side slide-in account menu for the profile tab.
 //
-// Usage:
-//   <SideMenuDrawer
-//     visible={isOpen}
-//     onClose={() => setIsOpen(false)}
-//     title="Menu"
-//     items={[...]}
-//     footer={...}
-//   />
+// Modern layout: a profile header (avatar + name + @handle), an Appearance
+// segmented control (Light / Dark / Auto), the navigation items as clean rows
+// with tinted icon tiles, and a pinned footer (Sign out). Fully theme-aware —
+// styles are built from the active palette via useTheme().
 
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import {
-    Modal,
-    Pressable,
-    SafeAreaView as RNSafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    View,
-} from "react-native";
+import { useMemo } from "react";
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import Animated, { SlideInRight } from "react-native-reanimated";
+import { SafeAreaView } from "react-native-safe-area-context";
 
-import {
-    colors,
-    fonts,
-    radius,
-    shadows,
-    spacing,
-    typographyTokens as T,
-} from "@/theme/colors";
+import { Avatar } from "@/components/Avatar";
+import { fonts, radius, spacing, typographyTokens as T } from "@/theme/colors";
+import { useTheme, type ThemeMode } from "@/theme/ThemeProvider";
+import type { ThemeColors } from "@/theme/themes";
+import type { User } from "@/types/user";
 
 export interface SideMenuItem {
   icon: keyof typeof MaterialCommunityIcons.glyphMap;
@@ -43,9 +30,20 @@ interface SideMenuDrawerProps {
   onClose: () => void;
   title?: string;
   items: SideMenuItem[];
-  /** Item rendered at the bottom of the drawer (typically Sign out). */
   footer?: SideMenuItem;
+  /** Signed-in user, shown in the header. */
+  user?: User | null;
 }
+
+const THEME_OPTIONS: {
+  mode: ThemeMode;
+  label: string;
+  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+}[] = [
+  { mode: "light", label: "Light", icon: "white-balance-sunny" },
+  { mode: "dark", label: "Dark", icon: "weather-night" },
+  { mode: "system", label: "Auto", icon: "theme-light-dark" },
+];
 
 export function SideMenuDrawer({
   visible,
@@ -53,70 +51,24 @@ export function SideMenuDrawer({
   title = "Menu",
   items,
   footer,
+  user,
 }: SideMenuDrawerProps) {
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      statusBarTranslucent
-      onRequestClose={onClose}
-    >
-      {/* Tap outside the drawer to close. The drawer itself stops propagation. */}
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={() => {}}>
-          <RNSafeAreaView style={{ flex: 1 }}>
-            {/* Drawer header */}
-            <View style={styles.header}>
-              <Text style={styles.title}>{title}</Text>
-              <Pressable
-                onPress={onClose}
-                hitSlop={8}
-                style={styles.closeBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Close menu"
-              >
-                <MaterialCommunityIcons
-                  name="close"
-                  size={22}
-                  color={colors.textPrimary}
-                />
-              </Pressable>
-            </View>
+  const { colors, mode, setMode } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
 
-            {/* Scrollable menu items */}
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.itemsContainer}
-            >
-              {items.map((item) => (
-                <DrawerItem key={item.label} item={item} />
-              ))}
-            </ScrollView>
-
-            {/* Footer item — locked to bottom of drawer */}
-            {footer ? <DrawerItem item={footer} /> : null}
-          </RNSafeAreaView>
-        </Pressable>
-      </Pressable>
-    </Modal>
-  );
-}
-
-function DrawerItem({ item }: { item: SideMenuItem }) {
-  return (
+  const renderItem = (item: SideMenuItem) => (
     <Pressable
+      key={item.label}
       onPress={item.onPress}
-      android_ripple={{ color: colors.pageBackground }}
       style={({ pressed }) => [styles.item, pressed && styles.itemPressed]}
       accessibilityRole="button"
       accessibilityLabel={item.label}
     >
-      <View style={[styles.iconWrap, item.danger && styles.iconWrapDanger]}>
+      <View style={[styles.iconTile, item.danger && styles.iconTileDanger]}>
         <MaterialCommunityIcons
           name={item.icon}
-          size={22}
-          color={item.danger ? colors.error : colors.textPrimary}
+          size={20}
+          color={item.danger ? colors.error : colors.primary}
         />
       </View>
       <Text style={[styles.itemLabel, item.danger && styles.itemLabelDanger]}>
@@ -131,79 +83,235 @@ function DrawerItem({ item }: { item: SideMenuItem }) {
       ) : null}
     </Pressable>
   );
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      navigationBarTranslucent
+      onRequestClose={onClose}
+    >
+      <Pressable style={styles.overlay} onPress={onClose}>
+        <Animated.View entering={SlideInRight.duration(240)} style={styles.panel}>
+          <Pressable style={styles.panelInner} onPress={() => {}}>
+            <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+              {/* Header */}
+              <View style={styles.header}>
+                <Text style={styles.headerTitle}>{title}</Text>
+                <Pressable
+                  onPress={onClose}
+                  hitSlop={8}
+                  style={styles.closeBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close menu"
+                >
+                  <MaterialCommunityIcons
+                    name="close"
+                    size={20}
+                    color={colors.textPrimary}
+                  />
+                </Pressable>
+              </View>
+
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.scroll}
+              >
+                {/* Profile card */}
+                {user ? (
+                  <View style={styles.profile}>
+                    <Avatar
+                      fileId={user.avatarUrl}
+                      displayName={user.displayName}
+                      userId={user.id}
+                      size={52}
+                    />
+                    <View style={styles.profileText}>
+                      <Text style={styles.profileName} numberOfLines={1}>
+                        {user.displayName}
+                      </Text>
+                      <Text style={styles.profileHandle} numberOfLines={1}>
+                        @{user.username}
+                      </Text>
+                    </View>
+                  </View>
+                ) : null}
+
+                {/* Appearance */}
+                <Text style={styles.sectionLabel}>Appearance</Text>
+                <View style={styles.segmented}>
+                  {THEME_OPTIONS.map((opt) => {
+                    const active = mode === opt.mode;
+                    return (
+                      <Pressable
+                        key={opt.mode}
+                        onPress={() => setMode(opt.mode)}
+                        style={[styles.segment, active && styles.segmentActive]}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: active }}
+                        accessibilityLabel={`${opt.label} theme`}
+                      >
+                        <MaterialCommunityIcons
+                          name={opt.icon}
+                          size={16}
+                          color={active ? colors.primary : colors.textMuted}
+                        />
+                        <Text
+                          style={[
+                            styles.segmentLabel,
+                            active && styles.segmentLabelActive,
+                          ]}
+                        >
+                          {opt.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                {/* Items */}
+                <View style={styles.itemsCard}>{items.map(renderItem)}</View>
+              </ScrollView>
+
+              {footer ? <View style={styles.footer}>{renderItem(footer)}</View> : null}
+            </SafeAreaView>
+          </Pressable>
+        </Animated.View>
+      </Pressable>
+    </Modal>
+  );
 }
 
-// Re-export children of the drawer for callers that want to customize.
-export const SideMenuDrawerContent: typeof DrawerItem = DrawerItem;
-
-const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
-    flexDirection: "row",
-    justifyContent: "flex-end",
-  },
-  sheet: {
-    width: "78%",
-    height: "100%",
-    backgroundColor: colors.cardBackground,
-    ...shadows.md,
-  },
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.lg,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.divider,
-  },
-  title: {
-    fontFamily: fonts.bold,
-    fontSize: T.size.xl,
-    color: colors.textPrimary,
-    letterSpacing: T.tracking.tight,
-  },
-  closeBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.full,
-    backgroundColor: colors.pageBackground,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  itemsContainer: {
-    paddingBottom: spacing.xl,
-  },
-  item: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: spacing.lg,
-    paddingHorizontal: spacing.xl,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.divider,
-    gap: spacing.md,
-  },
-  itemPressed: { backgroundColor: colors.pageBackground },
-  iconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.md,
-    backgroundColor: colors.pageBackground,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  iconWrapDanger: {
-    backgroundColor: colors.errorBg,
-  },
-  itemLabel: {
-    flex: 1,
-    fontFamily: fonts.medium,
-    fontSize: T.size.base,
-    color: colors.textPrimary,
-  },
-  itemLabelDanger: {
-    color: colors.error,
-    fontFamily: fonts.bold,
-  },
-});
+function makeStyles(c: ThemeColors) {
+  return StyleSheet.create({
+    overlay: {
+      flex: 1,
+      backgroundColor: "rgba(0,0,0,0.45)",
+      flexDirection: "row",
+      justifyContent: "flex-end",
+    },
+    // One clean surface — no grey page behind floating white cards.
+    panel: {
+      width: "84%",
+      maxWidth: 380,
+      height: "100%",
+      backgroundColor: c.cardBackground,
+    },
+    panelInner: { flex: 1 },
+    safe: { flex: 1 },
+    header: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingHorizontal: spacing.xl,
+      paddingTop: spacing.sm,
+      paddingBottom: spacing.sm,
+    },
+    headerTitle: {
+      fontFamily: fonts.black,
+      fontSize: T.size.xxl,
+      color: c.textPrimary,
+      letterSpacing: T.tracking.tight,
+    },
+    closeBtn: {
+      width: 36,
+      height: 36,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    scroll: { paddingHorizontal: spacing.xl, paddingBottom: spacing.lg },
+    // Profile header — borderless, separated by a hairline rule + whitespace.
+    profile: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: spacing.md,
+      paddingVertical: spacing.md,
+      marginBottom: spacing.lg,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: c.divider,
+    },
+    profileText: { flex: 1 },
+    profileName: {
+      fontFamily: fonts.bold,
+      fontSize: T.size.lg,
+      color: c.textPrimary,
+      letterSpacing: T.tracking.tight,
+    },
+    profileHandle: {
+      fontFamily: fonts.regular,
+      fontSize: T.size.sm,
+      color: c.textMuted,
+      marginTop: 2,
+    },
+    sectionLabel: {
+      fontFamily: fonts.bold,
+      fontSize: T.size.xs,
+      color: c.textMuted,
+      textTransform: "uppercase",
+      letterSpacing: T.tracking.wider,
+      marginBottom: spacing.sm,
+    },
+    // Bordered (not filled) segmented control — stays on the white surface.
+    segmented: {
+      flexDirection: "row",
+      borderRadius: radius.md,
+      padding: 3,
+      gap: 3,
+      marginBottom: spacing.xl,
+      borderWidth: 1,
+      borderColor: c.divider,
+    },
+    segment: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 5,
+      paddingVertical: spacing.sm,
+      borderRadius: radius.sm,
+    },
+    segmentActive: { backgroundColor: c.primaryLight },
+    segmentLabel: {
+      fontFamily: fonts.medium,
+      fontSize: T.size.sm,
+      color: c.textMuted,
+    },
+    segmentLabelActive: { color: c.primary, fontFamily: fonts.bold },
+    // Items sit directly on the white surface, separated by whitespace.
+    itemsCard: { gap: spacing.xs },
+    item: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: spacing.md,
+      paddingVertical: spacing.sm + 3,
+      borderRadius: radius.md,
+    },
+    itemPressed: { backgroundColor: c.primaryLight },
+    // Brand-tinted tile (coral), not grey.
+    iconTile: {
+      width: 38,
+      height: 38,
+      borderRadius: radius.md,
+      backgroundColor: c.primaryLight,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    iconTileDanger: { backgroundColor: c.errorBg },
+    itemLabel: {
+      flex: 1,
+      fontFamily: fonts.medium,
+      fontSize: T.size.base,
+      color: c.textPrimary,
+    },
+    itemLabelDanger: { color: c.error, fontFamily: fonts.bold },
+    footer: {
+      paddingHorizontal: spacing.xl,
+      paddingTop: spacing.sm,
+      paddingBottom: spacing.sm,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: c.divider,
+    },
+  });
+}

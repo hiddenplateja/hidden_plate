@@ -19,6 +19,16 @@
 // We KNOW the unlike decrement fails for other users' reviews. That's a
 // trade-off: full server-side handling would require another Function
 // endpoint. At current scale the drift is acceptable.
+//
+// Error handling:
+//   - listLikedReviewsByUser (drives the Likes tab) throws on failure so
+//     the screen can show an error state with retry.
+//   - hasUserLiked / getLikedReviewIds stay tolerant — they decorate UI
+//     (heart icons), and a false negative just means the heart shows
+//     un-liked for a moment until the next refresh. Surfacing an error
+//     there would be over-aggressive.
+//   - The "expected to fail" counter decrement does NOT report to Sentry
+//     because we'd flood the dashboard with non-bugs. Other failures do.
 
 import {
   AppwriteException,
@@ -30,6 +40,8 @@ import {
 
 import { account, appwriteConfig, databases } from "@/services/appwrite";
 import { triggerLikeNotification } from "@/services/notificationTriggers";
+import { captureError } from "@/services/sentry";
+import type { Review, ReviewPage } from "@/types/review";
 
 export class ReviewLikeError extends Error {
   constructor(
@@ -43,16 +55,42 @@ export class ReviewLikeError extends Error {
 
 interface ReviewDoc {
   $id: string;
-  likeCount: number;
-  /** Author of the review — needed to notify them when liked. */
+  $createdAt: string;
+  $updatedAt: string;
+  restaurantId: string;
   userId: string;
+  rating: number;
+  comment: string | null;
+  imageIds: string[];
+  likeCount: number;
+  commentCount: number;
+  isEdited: boolean;
+  isHidden: boolean;
 }
 
 interface LikeDoc {
   $id: string;
+  $createdAt: string;
   reviewId: string;
   userId: string;
   restaurantId: string;
+}
+
+function mapReviewDoc(doc: ReviewDoc): Review {
+  return {
+    id: doc.$id,
+    createdAt: doc.$createdAt,
+    updatedAt: doc.$updatedAt,
+    restaurantId: doc.restaurantId,
+    userId: doc.userId,
+    rating: doc.rating,
+    comment: doc.comment,
+    imageIds: doc.imageIds ?? [],
+    likeCount: doc.likeCount ?? 0,
+    commentCount: doc.commentCount ?? 0,
+    isEdited: doc.isEdited ?? false,
+    isHidden: doc.isHidden ?? false,
+  };
 }
 
 async function getCurrentUser(): Promise<{ id: string; name: string }> {
@@ -94,6 +132,11 @@ export async function likeReview(
       // Race: another tap won. That's fine.
       return;
     }
+    captureError(err, {
+      service: "reviewLikes",
+      op: "likeReview",
+      reviewId,
+    });
     throw new ReviewLikeError("Failed to like review.");
   }
 
@@ -108,7 +151,11 @@ export async function likeReview(
       reviewId,
     )) as unknown as ReviewDoc;
   } catch (err) {
-    console.warn("[reviewLikes] failed to fetch review:", err);
+    captureError(err, {
+      service: "reviewLikes",
+      op: "likeReview.fetchAuthor",
+      reviewId,
+    });
   }
 
   // 3. Trigger notification + server-side counter bump (fire-and-forget).
@@ -121,7 +168,14 @@ export async function likeReview(
       actorName: me.name,
       reviewId,
     }).catch((err) => {
-      console.warn("[reviewLikes] notification trigger failed:", err);
+      // Notification triggers are non-critical UX — counter eventually
+      // reconciles, push is best-effort. Report so we know if it's
+      // happening at scale, but don't surface to the user.
+      captureError(err, {
+        service: "reviewLikes",
+        op: "likeReview.notifyTrigger",
+        reviewId,
+      });
     });
   }
 }
@@ -151,12 +205,21 @@ export async function unlikeReview(reviewId: string): Promise<void> {
     );
     deleted = true;
   } catch (err) {
+    captureError(err, {
+      service: "reviewLikes",
+      op: "unlikeReview",
+      reviewId,
+    });
     throw new ReviewLikeError("Failed to unlike review.");
   }
 
   // 2. Best-effort client-side decrement. Will fail silently when the
   // current user isn't the review's author (most cases). Acceptable
   // drift — reconciled by periodic recount script.
+  //
+  // We deliberately DON'T captureError here. This failure is EXPECTED
+  // by design — flooding Sentry with permission-denied errors on every
+  // unlike would drown out real bugs.
   if (!deleted) return;
   try {
     const review = (await databases.getDocument(
@@ -173,7 +236,7 @@ export async function unlikeReview(reviewId: string): Promise<void> {
       { likeCount: next },
     );
   } catch (err) {
-    // Expected for non-author users. Drift accepted.
+    // Expected for non-author users. Drift accepted. No Sentry — see above.
     console.warn("[reviewLikes] counter decrement failed (expected):", err);
   }
 }
@@ -181,6 +244,10 @@ export async function unlikeReview(reviewId: string): Promise<void> {
 /**
  * Has the current user (or a given user) liked this review?
  * Source of truth — never trust the counter for this check.
+ *
+ * Tolerant: returns false on failure with a Sentry report. A false
+ * negative just shows an empty heart momentarily — much better UX than
+ * surfacing an error toast every time the heart icon renders.
  */
 export async function hasUserLiked(
   reviewId: string,
@@ -206,7 +273,12 @@ export async function hasUserLiked(
       ],
     );
     return res.documents.length > 0;
-  } catch {
+  } catch (err) {
+    captureError(err, {
+      service: "reviewLikes",
+      op: "hasUserLiked",
+      reviewId,
+    });
     return false;
   }
 }
@@ -214,6 +286,10 @@ export async function hasUserLiked(
 /**
  * Get the set of review IDs the current user has liked from a given list.
  * Used when rendering a list of reviews — one query instead of N.
+ *
+ * Tolerant: returns empty set on failure. Same reasoning as hasUserLiked
+ * — used to decorate hearts on already-rendered lists; failing closed is
+ * better than blocking the entire list.
  */
 export async function getLikedReviewIds(
   reviewIds: string[],
@@ -239,7 +315,112 @@ export async function getLikedReviewIds(
     return new Set(
       res.documents.map((d) => (d as unknown as LikeDoc).reviewId),
     );
-  } catch {
+  } catch (err) {
+    captureError(err, {
+      service: "reviewLikes",
+      op: "getLikedReviewIds",
+      count: reviewIds.length,
+    });
     return new Set();
+  }
+}
+
+/**
+ * List reviews that a given user has liked, sorted by when they liked them
+ * (most recent first). Used by the Likes tab on the profile screen.
+ *
+ * Two queries:
+ *   1. Page through reviewLikes for this user, sorted by $createdAt DESC.
+ *      This gives us "most-recently-liked first" ordering — what users
+ *      expect from a Likes list (vs. ordering by when the review was posted).
+ *   2. Batch-fetch the corresponding review docs in one query.
+ *
+ * Important: the cursor here is the $id of the LAST reviewLikes row in the
+ * previous page, NOT a review's $id. The pagination lives on the likes
+ * collection, since that's what we're ordering by.
+ *
+ * Hidden reviews are filtered out client-side (cheaper than a separate
+ * query — we already have the docs in hand).
+ *
+ * Returns the same ReviewPage shape as listReviewsByUser so it can slot
+ * into the same UI patterns. nextCursor is the reviewLikes row $id, opaque
+ * to callers — just pass it back into the next call.
+ *
+ * Throws on failure. The Likes tab needs to surface this — silently
+ * showing an empty tab when the fetch errored is misleading.
+ */
+export async function listLikedReviewsByUser(
+  userId: string,
+  options: { pageSize?: number; cursor?: string | null } = {},
+): Promise<ReviewPage> {
+  const { pageSize = 20, cursor } = options;
+
+  const likeQueries: string[] = [
+    Query.equal("userId", userId),
+    Query.orderDesc("$createdAt"),
+    Query.limit(pageSize),
+  ];
+  if (cursor) likeQueries.push(Query.cursorAfter(cursor));
+
+  try {
+    // 1. Get this page of reviewLikes rows.
+    const likesRes = await databases.listDocuments(
+      appwriteConfig.databaseId,
+      appwriteConfig.collections.reviewLikes,
+      likeQueries,
+    );
+    const likeDocs = likesRes.documents as unknown as LikeDoc[];
+
+    if (likeDocs.length === 0) {
+      return {
+        items: [],
+        total: likesRes.total,
+        hasMore: false,
+        nextCursor: null,
+      };
+    }
+
+    // Preserve the like-order (most recent first) when we hydrate reviews.
+    const reviewIds = likeDocs.map((l) => l.reviewId);
+    const lastLikeId = likeDocs[likeDocs.length - 1].$id;
+
+    // 2. Batch-fetch the corresponding reviews. `Query.equal` on the doc
+    // ID accepts an array, so this is one round-trip.
+    const reviewsRes = await databases.listDocuments(
+      appwriteConfig.databaseId,
+      appwriteConfig.collections.reviews,
+      [Query.equal("$id", reviewIds), Query.limit(reviewIds.length)],
+    );
+
+    // Build a lookup map then iterate the original reviewIds order so the
+    // final list matches like-recency, not whatever order Appwrite returned.
+    const byId = new Map<string, Review>();
+    for (const doc of reviewsRes.documents) {
+      const r = mapReviewDoc(doc as unknown as ReviewDoc);
+      // Filter hidden reviews — they shouldn't appear in any feed.
+      if (!r.isHidden) byId.set(r.id, r);
+    }
+
+    const items = reviewIds
+      .map((id) => byId.get(id))
+      .filter((r): r is Review => r !== undefined);
+
+    return {
+      items,
+      total: likesRes.total,
+      // hasMore tracks the LIKES page, not the reviews page — that's how
+      // we know whether there are more likes to paginate through. If the
+      // reviews page came back smaller (some were hidden/deleted), that's
+      // fine; we still want to keep paginating.
+      hasMore: likeDocs.length === pageSize,
+      nextCursor: lastLikeId,
+    };
+  } catch (err) {
+    captureError(err, {
+      service: "reviewLikes",
+      op: "listLikedReviewsByUser",
+      userId,
+    });
+    throw new ReviewLikeError("Couldn't load liked reviews.");
   }
 }

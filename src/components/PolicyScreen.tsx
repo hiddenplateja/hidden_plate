@@ -14,13 +14,9 @@ import { ReactNode } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import {
-    colors,
-    fonts,
-    radius,
-    spacing,
-    typographyTokens as T,
-} from "@/theme/colors";
+import { fonts, radius, spacing, typographyTokens as T } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 
 export interface PolicySection {
   heading: string;
@@ -45,6 +41,7 @@ export function PolicyScreen({
   footer,
 }: PolicyScreenProps) {
   const router = useRouter();
+  const { styles, colors } = useThemedStyles(makeStyles);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -104,7 +101,9 @@ export function PolicyScreen({
   );
 }
 
-const styles = StyleSheet.create({
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.pageBackground },
   header: {
     flexDirection: "row",
@@ -184,4 +183,5 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     lineHeight: 22,
   },
-});
+  });
+}

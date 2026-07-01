@@ -27,12 +27,15 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { ProfileView } from "@/components/ProfileView";
 import { SideMenuDrawer, type SideMenuItem } from "@/components/SideMenuDrawer";
 import { useAuth } from "@/hooks/useAuth";
-import { colors, radius, spacing } from "@/theme/colors";
+import { radius, spacing } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 
 export default function MyProfileScreen() {
   const router = useRouter();
   const { user, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
+  const { styles, colors } = useThemedStyles(makeStyles);
 
   const handleSearch = useCallback(() => {
     router.push("/search-users");
@@ -72,6 +75,30 @@ export default function MyProfileScreen() {
   }
 
   const menuItems: SideMenuItem[] = [
+    {
+      icon: "plus-box-outline",
+      label: "Add a Restaurant",
+      onPress: () => {
+        setMenuOpen(false);
+        router.push("/add-restaurant");
+      },
+    },
+    {
+      icon: "storefront-outline",
+      label: "Your Restaurants",
+      onPress: () => {
+        setMenuOpen(false);
+        router.push("/my-restaurants");
+      },
+    },
+    {
+      icon: "medal-outline",
+      label: "Reviewer Badges",
+      onPress: () => {
+        setMenuOpen(false);
+        router.push("/badges");
+      },
+    },
     {
       icon: "cog-outline",
       label: "Settings",
@@ -186,6 +213,7 @@ export default function MyProfileScreen() {
         visible={menuOpen}
         onClose={() => setMenuOpen(false)}
         title="Menu"
+        user={user}
         items={menuItems}
         footer={footerItem}
       />
@@ -193,8 +221,10 @@ export default function MyProfileScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  // Whole screen white — matches Community and Saved
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
+  // Whole screen — matches Community and Saved
   safe: { flex: 1, backgroundColor: colors.cardBackground },
   topNav: {
     flexDirection: "row",
@@ -221,4 +251,5 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: colors.cardBackground,
   },
-});
+  });
+}

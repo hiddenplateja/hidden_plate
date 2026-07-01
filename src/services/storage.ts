@@ -69,7 +69,6 @@ interface PreviewOptions {
  */
 export function getImagePreviewUrl(
   fileId: string,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _options: PreviewOptions = {},
 ): string {
   return buildFileUrl(fileId);
@@ -88,6 +87,9 @@ export function getImageViewUrl(fileId: string): string {
  */
 export function getAvatarUrl(fileId: string | null | undefined): string | null {
   if (!fileId) return null;
+  // OAuth users store their provider profile photo URL directly in avatarUrl
+  // (not a Storage file id) — pass any absolute URL straight through.
+  if (fileId.startsWith("http")) return fileId;
   return getImageViewUrl(fileId);
 }
 

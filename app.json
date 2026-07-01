@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "hiddenplate",
+    "scheme": ["hiddenplate", "appwrite-callback-69fe8b7f003e6deb2878"],
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
@@ -73,6 +73,14 @@
         "expo-notifications",
         {
           "color": "#FF6B35"
+        }
+      ],
+      [
+        "@sentry/react-native/expo",
+        {
+          "url": "https://sentry.io/",
+          "project": "react-native",
+          "organization": "hidden-plate"
         }
       ]
     ],

@@ -15,6 +15,9 @@ export interface User {
   bio?: string | null;
   createdAt: string;
   emailVerified?: boolean;
+  /** Admin moderation flag. Requires an `isBanned` attribute on the users
+   *  collection; an absent attribute reads as false. */
+  isBanned?: boolean;
 }
 
 export interface SignupInput {
@@ -30,6 +33,7 @@ export interface LoginInput {
 }
 
 export interface UpdateProfileInput {
+  username?: string;
   displayName?: string;
   bio?: string | null;
   avatarUrl?: string | null;

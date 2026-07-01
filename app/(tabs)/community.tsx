@@ -14,6 +14,24 @@
 // installed on device. Once we install today's EAS APK on a clean device
 // (or wipe the emulator), we can paste the realtime useEffect back here.
 // In the meantime, pull-to-refresh re-fetches latest counts.
+//
+// Blocking (mutual): blocked users' reviews are filtered out client-side
+// using getHiddenUserIds() (the union of "I blocked" + "blocked me"). The
+// per-review ⋯ menu also offers Block for other people's reviews, which
+// hides their content immediately and persists via the blocks service.
+//
+// Visual: flat feed on a single white surface — no card chrome (no shadow,
+// no rounded corners, no border). Reviews are separated by a hairline, like
+// Twitter/Instagram. The cleaner look came once we removed the gray page
+// background from Home; bordered tiles on a same-color background read as
+// noise.
+//
+// Failure UX:
+//   When the initial load fails, we surface ErrorState with retry rather
+//   than silently showing an empty feed. Pagination failures stay silent
+//   (Sentry-only) since the first page already rendered and the user can
+//   pull-to-refresh if it bothers them. Errors are tagged with the
+//   feed-tab so the Sentry dashboard can show which tab is failing more.
 
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
@@ -32,13 +50,19 @@ import {
   Share,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { Avatar } from "@/components/Avatar";
+import { CommunityDrawer } from "@/components/CommunityDrawer";
+import { ErrorState } from "@/components/ErrorState";
+import { Skeleton, SkeletonCircle, SkeletonText } from "@/components/Skeleton";
 import { useAuth } from "@/hooks/useAuth";
-import { getFollowingIds } from "@/services/follows";
+import { blockUser, getHiddenUserIds } from "@/services/blocks";
+import { getFollowCounts, getFollowingIds } from "@/services/follows";
 import { reportReview } from "@/services/reports";
 import { getRestaurantsByIds } from "@/services/restaurants";
 import {
@@ -52,16 +76,18 @@ import {
   listReviewsByFollowing,
 } from "@/services/reviews";
 import { listSavedByUser } from "@/services/saved";
+import { captureError } from "@/services/sentry";
 import { getImageViewUrl } from "@/services/storage";
+import { getTastePreferences } from "@/services/userPreferences";
 import { getUsersByIds } from "@/services/users";
 import {
-  colors,
   fonts,
   radius,
-  shadows,
   spacing,
   typographyTokens as T,
 } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 import type { Parish, Restaurant } from "@/types/restaurant";
 import type { Review } from "@/types/review";
 import type { User } from "@/types/user";
@@ -89,6 +115,13 @@ interface FeedState {
   refreshing: boolean;
   loadingMore: boolean;
   notFollowingAnyone: boolean;
+  /**
+   * Set when the initial load (or refresh) failed and we have no items
+   * to show. Cleared on successful load or retry. Pagination failures
+   * do not set this — they're surfaced only via Sentry to avoid an
+   * error UI flashing after the user has scrolled past the first page.
+   */
+  error: Error | null;
 }
 
 const EMPTY_FEED: FeedState = {
@@ -100,6 +133,7 @@ const EMPTY_FEED: FeedState = {
   refreshing: false,
   loadingMore: false,
   notFollowingAnyone: false,
+  error: null,
 };
 
 const PARISH_LABELS: Record<Parish, string> = {
@@ -165,15 +199,92 @@ function buildShareMessage(item: FeedItem): string {
   return `${author} reviewed ${restaurant} on Hidden Plate ${rating}${snippet}`;
 }
 
+// ─── Skeleton card — matches the flat layout (no card chrome) ───────────────
+// Avatar + name/handle row, restaurant tag, stars, 3 text lines, photo
+// block, footer with three action placeholders. Same paddings as the real
+// flat row so the swap is seamless.
+
+function CommunityCardSkeleton() {
+  const { styles: cardStyles } = useThemedStyles(makeCardStyles);
+  return (
+    <View style={cardStyles.card}>
+      {/* Author row */}
+      <View style={cardStyles.authorRow}>
+        <View style={cardStyles.authorInfo}>
+          <SkeletonCircle size={42} />
+          <View style={{ flex: 1, gap: 4 }}>
+            <Skeleton width="55%" height={14} borderRadius={4} />
+            <Skeleton width="40%" height={11} borderRadius={4} />
+          </View>
+        </View>
+        <Skeleton width={32} height={32} borderRadius={radius.full} />
+      </View>
+
+      {/* Restaurant tag */}
+      <Skeleton
+        width={180}
+        height={26}
+        borderRadius={radius.lg}
+        style={{ marginBottom: spacing.md }}
+      />
+
+      {/* Stars */}
+      <Skeleton
+        width={90}
+        height={14}
+        borderRadius={4}
+        style={{ marginBottom: spacing.md }}
+      />
+
+      {/* Comment */}
+      <View style={{ marginBottom: spacing.md }}>
+        <SkeletonText lines={3} lineHeight={14} gap={8} lastLineWidthPct={55} />
+      </View>
+
+      {/* Photo */}
+      <Skeleton
+        width="100%"
+        height={180}
+        borderRadius={radius.lg}
+        style={{ marginBottom: spacing.md }}
+      />
+
+      {/* Footer */}
+      <View style={cardStyles.footer}>
+        <Skeleton width={40} height={14} borderRadius={4} />
+        <Skeleton width={40} height={14} borderRadius={4} />
+        <Skeleton width={24} height={14} borderRadius={4} />
+      </View>
+    </View>
+  );
+}
+
 export default function CommunityScreen() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, logout, isAdmin } = useAuth();
+  const { styles, colors } = useThemedStyles(makeStyles);
+  const cardStyles = useThemedStyles(makeCardStyles).styles;
+  const sheetStyles = useThemedStyles(makeSheetStyles).styles;
+
+  // Avatar drawer + in-feed search.
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<TextInput>(null);
+  const [followCounts, setFollowCounts] = useState({
+    followerCount: 0,
+    followingCount: 0,
+  });
 
   const [activeTab, setActiveTab] = useState<FeedTab>("following");
   const [following, setFollowing] = useState<FeedState>(EMPTY_FEED);
   const [forYou, setForYou] = useState<FeedState>(EMPTY_FEED);
   const [reviewToManage, setReviewToManage] = useState<Review | null>(null);
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
+  // User IDs to filter out of the feed — the mutual block set (people I
+  // blocked + people who blocked me). Loaded on focus + refresh, and added
+  // to optimistically when blocking from the ⋯ menu.
+  const [blockedUserIds, setBlockedUserIds] = useState<Set<string>>(new Set());
   const [activePhotoSet, setActivePhotoSet] = useState<string[]>([]);
   const [activePhotoIndex, setActivePhotoIndex] = useState<number | null>(null);
 
@@ -215,7 +326,7 @@ export default function CommunityScreen() {
       };
     }
 
-    const [followingIds, savedDocs, parish] = await Promise.all([
+    const [followingIds, savedDocs, parish, taste] = await Promise.all([
       getFollowingIds(user.id).catch(() => [] as string[]),
       listSavedByUser().catch(() => []),
       (async () => {
@@ -230,14 +341,29 @@ export default function CommunityScreen() {
           return null;
         }
       })(),
+      getTastePreferences().catch(() => ({
+        favoriteCuisines: [] as string[],
+        favoriteParishes: [] as Parish[],
+      })),
     ]);
 
     return {
       followedAuthorIds: new Set(followingIds),
       savedRestaurantIds: new Set(savedDocs.map((d) => d.restaurantId)),
       userParish: parish,
+      favoriteCuisines: new Set(
+        taste.favoriteCuisines.map((c) => c.toLowerCase()),
+      ),
+      favoriteParishes: new Set(taste.favoriteParishes),
     };
   }, [user]);
+
+  // Load the mutual block set. Tolerant (returns empty on failure), so no
+  // try/catch needed — worst case the feed just isn't filtered.
+  const loadBlocked = useCallback(async () => {
+    const ids = await getHiddenUserIds();
+    setBlockedUserIds(ids);
+  }, []);
 
   const loadFollowing = useCallback(
     async (isRefresh = false) => {
@@ -246,6 +372,7 @@ export default function CommunityScreen() {
         ...prev,
         loading: !isRefresh,
         refreshing: isRefresh,
+        error: null,
       }));
 
       try {
@@ -276,14 +403,24 @@ export default function CommunityScreen() {
           refreshing: false,
           loadingMore: false,
           notFollowingAnyone: false,
+          error: null,
         });
         loaded.current.following = true;
       } catch (err) {
-        console.warn("[community] loadFollowing failed:", err);
+        const errorObj = err instanceof Error ? err : new Error(String(err));
+        captureError(errorObj, {
+          screen: "community",
+          tab: "following",
+          op: "loadFollowing",
+        });
         setFollowing((prev) => ({
           ...prev,
           loading: false,
           refreshing: false,
+          // Only show error UI when there's nothing to fall back on. If
+          // a refresh fails mid-session, keep the stale items visible
+          // rather than wiping them.
+          error: prev.items.length === 0 ? errorObj : prev.error,
         }));
       }
     },
@@ -292,11 +429,15 @@ export default function CommunityScreen() {
 
   const loadMoreFollowing = useCallback(async () => {
     if (!user || !following.hasMore || following.loadingMore) return;
-    const followingIds = await getFollowingIds(user.id);
-    if (followingIds.length === 0) return;
 
     setFollowing((prev) => ({ ...prev, loadingMore: true }));
     try {
+      const followingIds = await getFollowingIds(user.id);
+      if (followingIds.length === 0) {
+        setFollowing((prev) => ({ ...prev, loadingMore: false }));
+        return;
+      }
+
       const page = await listReviewsByFollowing(followingIds, {
         pageSize: FOLLOWING_BATCH,
         cursor: following.nextCursor,
@@ -312,7 +453,16 @@ export default function CommunityScreen() {
         hasMore: page.hasMore,
         loadingMore: false,
       }));
-    } catch {
+    } catch (err) {
+      // Silent UI failure for pagination — Sentry-only. The first page
+      // is already rendered; throwing an error UI here would wipe what
+      // the user is already reading. They can pull-to-refresh if they
+      // notice the feed stopped extending.
+      captureError(err, {
+        screen: "community",
+        tab: "following",
+        op: "loadMoreFollowing",
+      });
       setFollowing((prev) => ({ ...prev, loadingMore: false }));
     }
   }, [user, following, hydrate]);
@@ -323,6 +473,7 @@ export default function CommunityScreen() {
         ...prev,
         loading: !isRefresh,
         refreshing: isRefresh,
+        error: null,
       }));
 
       try {
@@ -359,14 +510,21 @@ export default function CommunityScreen() {
           refreshing: false,
           loadingMore: false,
           notFollowingAnyone: false,
+          error: null,
         });
         loaded.current.for_you = true;
       } catch (err) {
-        console.warn("[community] loadForYou failed:", err);
+        const errorObj = err instanceof Error ? err : new Error(String(err));
+        captureError(errorObj, {
+          screen: "community",
+          tab: "for_you",
+          op: "loadForYou",
+        });
         setForYou((prev) => ({
           ...prev,
           loading: false,
           refreshing: false,
+          error: prev.items.length === 0 ? errorObj : prev.error,
         }));
       }
     },
@@ -407,26 +565,48 @@ export default function CommunityScreen() {
         hasMore: page.hasMore,
         loadingMore: false,
       }));
-    } catch {
+    } catch (err) {
+      // Same silent-UI policy as loadMoreFollowing.
+      captureError(err, {
+        screen: "community",
+        tab: "for_you",
+        op: "loadMoreForYou",
+      });
       setForYou((prev) => ({ ...prev, loadingMore: false }));
     }
   }, [forYou, hydrate]);
 
   useFocusEffect(
     useCallback(() => {
+      loadBlocked();
       if (!loaded.current.following) loadFollowing();
       if (!loaded.current.for_you) loadForYou();
-    }, [loadFollowing, loadForYou]),
+    }, [loadBlocked, loadFollowing, loadForYou]),
   );
 
   const handleRefresh = useCallback(() => {
     loaded.current[activeTab] = false;
+    loadBlocked();
     if (activeTab === "following") loadFollowing(true);
     else loadForYou(true);
+  }, [activeTab, loadBlocked, loadFollowing, loadForYou]);
+
+  const handleRetry = useCallback(() => {
+    if (activeTab === "following") loadFollowing(false);
+    else loadForYou(false);
   }, [activeTab, loadFollowing, loadForYou]);
+
+  // Tracks review ids whose like toggle is mid-request, so re-entrant taps drop.
+  const likeInFlight = useRef<Set<string>>(new Set());
 
   const handleToggleLike = useCallback(
     async (reviewId: string, restaurantId: string, currentlyLiked: boolean) => {
+      // Per-review in-flight guard: a fast double-tap on one heart would
+      // otherwise fire like+unlike as two racing requests. Keyed by reviewId, so
+      // other reviews are unaffected. Ref → re-entry is blocked synchronously.
+      if (likeInFlight.current.has(reviewId)) return;
+      likeInFlight.current.add(reviewId);
+
       const setter = activeTab === "following" ? setFollowing : setForYou;
 
       setter((prev) => {
@@ -453,7 +633,15 @@ export default function CommunityScreen() {
       try {
         if (currentlyLiked) await unlikeReview(reviewId);
         else await likeReview(reviewId, restaurantId);
-      } catch {
+      } catch (err) {
+        // Service already reported to Sentry — we just revert the
+        // optimistic state. No alert: a brief flicker is less annoying
+        // than a popup for a heart icon.
+        captureError(err, {
+          screen: "community",
+          op: "toggleLike",
+          reviewId,
+        });
         setter((prev) => {
           const nextLiked = new Set(prev.likedIds);
           if (currentlyLiked) nextLiked.add(reviewId);
@@ -474,6 +662,8 @@ export default function CommunityScreen() {
           );
           return { ...prev, items: nextItems, likedIds: nextLiked };
         });
+      } finally {
+        likeInFlight.current.delete(reviewId);
       }
     },
     [activeTab],
@@ -486,6 +676,8 @@ export default function CommunityScreen() {
         message: buildShareMessage(item),
       });
     } catch (err) {
+      // Share sheet failures are usually "user dismissed" — don't report
+      // unless this becomes a real signal. Keep noisy-but-cheap log only.
       console.warn("[community] share failed:", err);
     }
   }, []);
@@ -502,6 +694,11 @@ export default function CommunityScreen() {
         items: prev.items.filter((i) => i.review.id !== review.id),
       }));
     } catch (err) {
+      captureError(err, {
+        screen: "community",
+        op: "deleteReview",
+        reviewId: review.id,
+      });
       Alert.alert(
         "Couldn't delete",
         err instanceof Error ? err.message : "Try again.",
@@ -515,13 +712,133 @@ export default function CommunityScreen() {
     try {
       await reportReview(review.id, review.restaurantId, "inappropriate");
       Alert.alert("Reported", "Thank you for keeping our community safe.");
-    } catch {}
+    } catch (err) {
+      // Roll back the optimistic hide so the review reappears, and let
+      // the user know it didn't actually file.
+      setHiddenIds((p) => {
+        const next = new Set(p);
+        next.delete(review.id);
+        return next;
+      });
+      captureError(err, {
+        screen: "community",
+        op: "reportReview",
+        reviewId: review.id,
+      });
+      Alert.alert(
+        "Couldn't report",
+        err instanceof Error ? err.message : "Please try again.",
+      );
+    }
+  }, []);
+
+  // Block the author of a review. Optimistic: add to blockedUserIds so all
+  // of their content disappears from the feed immediately; revert on error.
+  const handleBlockAuthor = useCallback(async (review: Review) => {
+    const targetId = review.userId;
+    setBlockedUserIds((p) => new Set(p).add(targetId));
+    try {
+      await blockUser(targetId);
+    } catch (err) {
+      setBlockedUserIds((p) => {
+        const next = new Set(p);
+        next.delete(targetId);
+        return next;
+      });
+      captureError(err, {
+        screen: "community",
+        op: "blockAuthor",
+        targetUserId: targetId,
+      });
+      Alert.alert(
+        "Couldn't block",
+        err instanceof Error ? err.message : "Try again.",
+      );
+    }
   }, []);
 
   const currentFeed = activeTab === "following" ? following : forYou;
   const visibleItems = currentFeed.items.filter(
-    (i) => !hiddenIds.has(i.review.id),
+    (i) => !hiddenIds.has(i.review.id) && !blockedUserIds.has(i.review.userId),
   );
+
+  // In-feed search: filters the loaded posts by the poster (name/handle),
+  // the restaurant name in the post, and the review text. Empty query =
+  // the full feed.
+  const searchTerm = searchQuery.trim().toLowerCase();
+  const searching = searchOpen && searchTerm.length > 0;
+  const displayedItems = searching
+    ? visibleItems.filter(
+        (i) =>
+          !!i.author?.displayName?.toLowerCase().includes(searchTerm) ||
+          !!i.author?.username?.toLowerCase().includes(searchTerm) ||
+          !!i.restaurant?.name?.toLowerCase().includes(searchTerm) ||
+          !!i.review.comment?.toLowerCase().includes(searchTerm),
+      )
+    : visibleItems;
+
+  const handleToggleSearch = useCallback(() => {
+    setSearchOpen((prev) => {
+      const next = !prev;
+      if (next) {
+        setTimeout(() => searchInputRef.current?.focus(), 50);
+      } else {
+        setSearchQuery("");
+      }
+      return next;
+    });
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    setDrawerOpen(false);
+    Alert.alert(
+      "Sign out?",
+      "You'll need to sign in again to use Hidden Plate.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Sign out",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await logout();
+            } catch (err) {
+              Alert.alert(
+                "Sign out failed",
+                err instanceof Error ? err.message : "Try again.",
+              );
+            }
+          },
+        },
+      ],
+    );
+  }, [logout]);
+
+  const handleOpenDrawer = useCallback(() => {
+    setDrawerOpen(true);
+    // Refresh follow counts each time the drawer opens (best-effort).
+    if (user?.id) {
+      getFollowCounts(user.id)
+        .then(setFollowCounts)
+        .catch(() => {});
+    }
+  }, [user?.id]);
+
+  const handlePremium = useCallback(() => {
+    setDrawerOpen(false);
+    Alert.alert(
+      "Hidden Plate Premium",
+      "Premium unlocks more features — coming soon!",
+    );
+  }, []);
+
+  // Author of the review currently open in the manage sheet (for the Block
+  // label + confirm copy). The managed review came from the active tab.
+  const manageAuthor =
+    reviewToManage != null
+      ? (currentFeed.items.find((i) => i.review.id === reviewToManage.id)
+          ?.author ?? null)
+      : null;
 
   const renderItem = useCallback(
     ({ item, index }: { item: FeedItem; index: number }) => {
@@ -744,7 +1061,15 @@ export default function CommunityScreen() {
         </Animated.View>
       );
     },
-    [currentFeed.likedIds, user, handleToggleLike, handleShare, router],
+    [
+      currentFeed.likedIds,
+      user,
+      handleToggleLike,
+      handleShare,
+      router,
+      cardStyles,
+      colors,
+    ],
   );
 
   const tabs = [
@@ -752,10 +1077,45 @@ export default function CommunityScreen() {
     { id: "for_you" as const, label: "For You" },
   ];
 
+  // Render selector — error state takes priority over loading and feed.
+  // We only show the error state when there's nothing to fall back on;
+  // a refresh failure with stale items present keeps the items visible.
+  const showError =
+    !currentFeed.loading && currentFeed.error && currentFeed.items.length === 0;
+
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <Animated.View entering={FadeIn.duration(400)} style={styles.header}>
+        <Pressable
+          onPress={handleOpenDrawer}
+          style={styles.headerSide}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel="Open menu"
+        >
+          <Avatar
+            fileId={user?.avatarUrl}
+            displayName={user?.displayName ?? ""}
+            userId={user?.id ?? ""}
+            size={36}
+          />
+        </Pressable>
+
         <Text style={styles.title}>Community</Text>
+
+        <Pressable
+          onPress={handleToggleSearch}
+          style={[styles.headerSide, styles.headerRight]}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={searchOpen ? "Close search" : "Search"}
+        >
+          <MaterialCommunityIcons
+            name={searchOpen ? "close" : "magnify"}
+            size={24}
+            color={colors.textPrimary}
+          />
+        </Pressable>
       </Animated.View>
 
       <View style={styles.tabsBar}>
@@ -785,14 +1145,61 @@ export default function CommunityScreen() {
         })}
       </View>
 
-      {currentFeed.loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.loadingText}>Loading feed…</Text>
+      {searchOpen ? (
+        <View style={styles.searchWrap}>
+          <View style={styles.searchBar}>
+            <MaterialCommunityIcons
+              name="magnify"
+              size={20}
+              color={colors.textSecondary}
+              style={{ marginRight: spacing.sm }}
+            />
+            <TextInput
+              ref={searchInputRef}
+              style={styles.searchInput}
+              placeholder="Search people, places, posts…"
+              placeholderTextColor={colors.textMuted}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              returnKeyType="search"
+              autoCapitalize="none"
+            />
+            {searchQuery.length > 0 ? (
+              <Pressable onPress={() => setSearchQuery("")} hitSlop={8}>
+                <MaterialCommunityIcons
+                  name="close-circle"
+                  size={18}
+                  color={colors.textMuted}
+                />
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+      ) : null}
+
+      {showError ? (
+        <ErrorState
+          variant="screen"
+          icon="cloud-off-outline"
+          title="Couldn't load the feed"
+          body="Check your connection and try again."
+          onRetry={handleRetry}
+        />
+      ) : currentFeed.loading ? (
+        // Skeleton list — mimics 4 feed rows with the same hairline gaps as
+        // the real list. No ActivityIndicator, no "Loading feed…" text.
+        <View style={styles.skeletonList}>
+          <CommunityCardSkeleton />
+          <View style={styles.itemDivider} />
+          <CommunityCardSkeleton />
+          <View style={styles.itemDivider} />
+          <CommunityCardSkeleton />
+          <View style={styles.itemDivider} />
+          <CommunityCardSkeleton />
         </View>
       ) : (
         <FlatList
-          data={visibleItems}
+          data={displayedItems}
           keyExtractor={(item) => item.review.id}
           renderItem={renderItem}
           style={styles.list}
@@ -802,7 +1209,10 @@ export default function CommunityScreen() {
           initialNumToRender={5}
           maxToRenderPerBatch={5}
           windowSize={5}
-          ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
+          // Hairline divider between reviews — gives the flat layout a
+          // clear "here's where one review ends and another starts" cue
+          // without the heavy chrome of borders + shadows.
+          ItemSeparatorComponent={() => <View style={styles.itemDivider} />}
           onEndReached={
             activeTab === "following" ? loadMoreFollowing : loadMoreForYou
           }
@@ -823,6 +1233,21 @@ export default function CommunityScreen() {
             ) : null
           }
           ListEmptyComponent={
+            searching ? (
+              <View style={styles.emptyContainer}>
+                <View style={styles.emptyIconWrap}>
+                  <MaterialCommunityIcons
+                    name="magnify"
+                    size={32}
+                    color={colors.primary}
+                  />
+                </View>
+                <Text style={styles.emptyTitle}>No matches</Text>
+                <Text style={styles.emptyBody}>
+                  Nothing in your feed matches “{searchQuery.trim()}”.
+                </Text>
+              </View>
+            ) : (
             <Animated.View
               entering={FadeInDown.springify()}
               style={styles.emptyContainer}
@@ -858,6 +1283,7 @@ export default function CommunityScreen() {
                 </>
               )}
             </Animated.View>
+            )
           }
         />
       )}
@@ -902,34 +1328,70 @@ export default function CommunityScreen() {
                 </Text>
               </Pressable>
             ) : (
-              <Pressable
-                style={sheetStyles.item}
-                onPress={() => {
-                  const r = reviewToManage;
-                  setReviewToManage(null);
-                  Alert.alert(
-                    "Report Review",
-                    "Report this as inappropriate?",
-                    [
-                      { text: "Cancel", style: "cancel" },
-                      {
-                        text: "Report",
-                        style: "destructive",
-                        onPress: () => r && handleReportReview(r),
-                      },
-                    ],
-                  );
-                }}
-              >
-                <MaterialCommunityIcons
-                  name="flag-outline"
-                  size={22}
-                  color={colors.error}
-                />
-                <Text style={[sheetStyles.itemText, { color: colors.error }]}>
-                  Report as Inappropriate
-                </Text>
-              </Pressable>
+              <>
+                <Pressable
+                  style={sheetStyles.item}
+                  onPress={() => {
+                    const r = reviewToManage;
+                    setReviewToManage(null);
+                    Alert.alert(
+                      "Report Review",
+                      "Report this as inappropriate?",
+                      [
+                        { text: "Cancel", style: "cancel" },
+                        {
+                          text: "Report",
+                          style: "destructive",
+                          onPress: () => r && handleReportReview(r),
+                        },
+                      ],
+                    );
+                  }}
+                >
+                  <MaterialCommunityIcons
+                    name="flag-outline"
+                    size={22}
+                    color={colors.error}
+                  />
+                  <Text style={[sheetStyles.itemText, { color: colors.error }]}>
+                    Report as Inappropriate
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  style={sheetStyles.item}
+                  onPress={() => {
+                    const r = reviewToManage;
+                    const uname = manageAuthor?.username;
+                    setReviewToManage(null);
+                    Alert.alert(
+                      "Block user",
+                      uname
+                        ? `Block @${uname}? You won't see each other's reviews or comments.`
+                        : "Block this user? You won't see each other's reviews or comments.",
+                      [
+                        { text: "Cancel", style: "cancel" },
+                        {
+                          text: "Block",
+                          style: "destructive",
+                          onPress: () => r && handleBlockAuthor(r),
+                        },
+                      ],
+                    );
+                  }}
+                >
+                  <MaterialCommunityIcons
+                    name="account-cancel-outline"
+                    size={22}
+                    color={colors.textPrimary}
+                  />
+                  <Text style={sheetStyles.itemText}>
+                    {manageAuthor?.username
+                      ? `Block @${manageAuthor.username}`
+                      : "Block user"}
+                  </Text>
+                </Pressable>
+              </>
             )}
 
             <Pressable
@@ -987,6 +1449,88 @@ export default function CommunityScreen() {
           </SafeAreaView>
         </View>
       </Modal>
+
+      <CommunityDrawer
+        visible={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        user={user}
+        follow={followCounts}
+        onProfilePress={() => {
+          setDrawerOpen(false);
+          router.push("/(tabs)/profile");
+        }}
+        onFollowingPress={() => {
+          setDrawerOpen(false);
+          if (user?.id) {
+            router.push({
+              pathname: "/follows/[type]",
+              params: { type: "following", userId: user.id },
+            });
+          }
+        }}
+        onFollowersPress={() => {
+          setDrawerOpen(false);
+          if (user?.id) {
+            router.push({
+              pathname: "/follows/[type]",
+              params: { type: "followers", userId: user.id },
+            });
+          }
+        }}
+        onPremiumPress={handlePremium}
+        items={[
+          ...(isAdmin
+            ? [
+                {
+                  icon: "shield-account" as const,
+                  label: "Admin",
+                  onPress: () => {
+                    setDrawerOpen(false);
+                    router.push("/admin");
+                  },
+                },
+              ]
+            : []),
+          {
+            icon: "account-circle-outline",
+            label: "My Profile",
+            onPress: () => {
+              setDrawerOpen(false);
+              router.push("/(tabs)/profile");
+            },
+          },
+          {
+            icon: "bookmark-outline",
+            label: "Saved",
+            onPress: () => {
+              setDrawerOpen(false);
+              router.push("/(tabs)/saved");
+            },
+          },
+          {
+            icon: "bell-outline",
+            label: "Notifications",
+            onPress: () => {
+              setDrawerOpen(false);
+              router.push("/notifications");
+            },
+          },
+          {
+            icon: "cog-outline",
+            label: "Settings",
+            onPress: () => {
+              setDrawerOpen(false);
+              router.push("/settings");
+            },
+          },
+        ]}
+        footer={{
+          icon: "logout",
+          label: "Log Out",
+          danger: true,
+          onPress: handleLogout,
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -998,8 +1542,6 @@ function AuthorAvatar({
   author: User | null;
   userId: string;
 }) {
-  const { Avatar } =
-    require("@/components/Avatar") as typeof import("@/components/Avatar");
   return (
     <Avatar
       fileId={author?.avatarUrl}
@@ -1010,21 +1552,57 @@ function AuthorAvatar({
   );
 }
 
-const styles = StyleSheet.create({
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.cardBackground },
   header: {
+    flexDirection: "row",
+    alignItems: "center",
     backgroundColor: colors.cardBackground,
     paddingHorizontal: spacing.screen,
     paddingTop: spacing.lg,
     paddingBottom: spacing.md,
-    alignItems: "center",
+  },
+  // Fixed-width left/right gutters so the centered title stays optically
+  // centered regardless of the avatar vs. icon widths.
+  headerSide: {
+    width: 40,
+    justifyContent: "center",
+  },
+  headerRight: {
+    alignItems: "flex-end",
   },
   title: {
+    flex: 1,
     fontFamily: fonts.black,
     fontSize: T.size.xxl,
     color: colors.textPrimary,
     letterSpacing: T.tracking.tight,
     textAlign: "center",
+  },
+  searchWrap: {
+    backgroundColor: colors.cardBackground,
+    paddingHorizontal: spacing.screen,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
+  },
+  searchBar: {
+    height: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.pageBackground,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.divider,
+  },
+  searchInput: {
+    flex: 1,
+    fontFamily: fonts.regular,
+    fontSize: T.size.base,
+    color: colors.textPrimary,
+    padding: 0,
   },
   tabsBar: {
     flexDirection: "row",
@@ -1058,7 +1636,20 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
   },
   list: { backgroundColor: colors.cardBackground },
-  listContent: { paddingTop: spacing.md, paddingBottom: 100 },
+  // No top padding — the first review row's own padding gives it room.
+  listContent: { paddingBottom: 100 },
+  // Matches the FlatList layout (no top padding) so the skeleton sits in
+  // the exact position the first real card will.
+  skeletonList: {
+    flex: 1,
+    backgroundColor: colors.cardBackground,
+  },
+  // Hairline between rows. Same colour as the tab-bar bottom divider so the
+  // page reads as one consistent piece of vertical typography.
+  itemDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.divider,
+  },
   center: {
     flex: 1,
     alignItems: "center",
@@ -1100,17 +1691,20 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 22,
   },
-});
+  });
+}
 
-const cardStyles = StyleSheet.create({
+function makeCardStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
+  // Flat row — no shadow, no border, no rounded corners, no horizontal
+  // margin. The hairline ItemSeparatorComponent does the visual splitting
+  // between rows. Horizontal padding lives here so the content respects
+  // the screen edge inset.
   card: {
     backgroundColor: colors.cardBackground,
-    borderRadius: radius.xl,
-    marginHorizontal: spacing.screen,
-    padding: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.divider,
-    ...shadows.sm,
+    paddingHorizontal: spacing.screen,
+    paddingVertical: spacing.lg,
   },
   cardPressed: { opacity: 0.97 },
   authorRow: {
@@ -1218,13 +1812,13 @@ const cardStyles = StyleSheet.create({
     marginBottom: spacing.md,
     opacity: 0.85,
   },
+  // Actions row (like / comment). No top hairline — under a post image it
+  // read as a stray separator between the photo and the buttons.
   footer: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.xl,
     paddingTop: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: colors.divider,
   },
   actionBtn: {
     flexDirection: "row",
@@ -1238,9 +1832,12 @@ const cardStyles = StyleSheet.create({
     color: colors.textMuted,
   },
   actionCountActive: { color: colors.primary },
-});
+  });
+}
 
-const sheetStyles = StyleSheet.create({
+function makeSheetStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.4)",
@@ -1293,7 +1890,8 @@ const sheetStyles = StyleSheet.create({
     fontSize: T.size.base,
     color: colors.textSecondary,
   },
-});
+  });
+}
 
 const photoStyles = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.96)" },

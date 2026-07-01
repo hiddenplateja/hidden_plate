@@ -38,13 +38,9 @@ import {
     type FollowListPage,
 } from "@/services/follows";
 import { getUserById } from "@/services/users";
-import {
-    colors,
-    fonts,
-    radius,
-    spacing,
-    typographyTokens as T,
-} from "@/theme/colors";
+import { fonts, radius, spacing, typographyTokens as T } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 import type { User } from "@/types/user";
 
 type FollowType = "followers" | "following";
@@ -68,6 +64,7 @@ export default function FollowsListScreen() {
   }>();
   const router = useRouter();
   const { user: me } = useAuth();
+  const { styles, colors } = useThemedStyles(makeStyles);
 
   const [state, setState] = useState<ViewState>({ status: "loading" });
   const [refreshing, setRefreshing] = useState(false);
@@ -319,8 +316,10 @@ export default function FollowsListScreen() {
 
 // ---------- Styles ----------
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.pageBackground },
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
+  safe: { flex: 1, backgroundColor: colors.background },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -329,7 +328,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     backgroundColor: colors.cardBackground,
     borderBottomWidth: 1,
-    borderBottomColor: colors.divider,
+    borderBottomColor: colors.border,
   },
   backBtn: {
     width: 36,
@@ -386,7 +385,7 @@ const styles = StyleSheet.create({
   },
   rowDivider: {
     height: 1,
-    backgroundColor: colors.divider,
+    backgroundColor: colors.border,
     marginLeft: spacing.screen + 48 + spacing.md,
   },
   footerLoader: {
@@ -419,4 +418,5 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 22,
   },
-});
+  });
+}

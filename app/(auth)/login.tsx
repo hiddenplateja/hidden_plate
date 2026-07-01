@@ -2,37 +2,39 @@
 // Login screen.
 //
 // Layout (top to bottom):
-//   - Brand header
-//   - Sign in with Apple (iOS only — App Store guideline 4.8 if other OAuth used)
-//   - Sign in with Google
+//   - Brand header (shared AuthHeader)
+//   - Sign in with Apple (iOS only) + Google (shared SocialAuthButtons)
 //   - Divider
-//   - Email + password form
-//   - "Don't have an account? Sign up" link
+//   - Email + password form (password has a show/hide toggle)
+//   - "Don't have an account? Sign up" link pinned to the bottom
 //
 // UX details:
-//   - KeyboardAvoidingView lifts form above keyboard on iOS
+//   - KeyboardAwareScrollView lifts the focused field above the keyboard
 //   - keyboardShouldPersistTaps="handled" so taps on buttons work with keyboard up
 //   - textContentType + autoComplete enable iOS QuickType + password manager
 //   - Email "next" focuses password; password "done" submits
 
-import { Link } from "expo-router";
-import { useRef, useState } from "react";
-import {
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
-} from "react-native";
+import { Link, useRouter, type Href } from "expo-router";
+import { useEffect, useRef, useState } from "react";
+import { Alert, StyleSheet, Text, TextInput, View } from "react-native";
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { AuthHeader } from "@/components/auth/AuthHeader";
+import { ContinueAsButton } from "@/components/auth/ContinueAsButton";
+import { SocialAuthButtons } from "@/components/auth/SocialAuthButtons";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { useAuth } from "@/hooks/useAuth";
-import { colors, spacing, typography } from "@/theme/colors";
+import { passwordResetEnabled, type OAuthResult } from "@/services/auth";
+import {
+  clearLastOAuth,
+  getLastOAuth,
+  type LastOAuth,
+} from "@/services/lastOAuth";
+import { fonts, spacing, typographyTokens as T } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 
 type SubmittingState = null | "email" | "google" | "apple";
 type LoginErrors = { email?: string; password?: string };
@@ -48,6 +50,43 @@ export default function LoginScreen() {
   const [submitting, setSubmitting] = useState<SubmittingState>(null);
 
   const passwordRef = useRef<TextInput>(null);
+  const router = useRouter();
+  const { styles } = useThemedStyles(makeStyles);
+  const resetEnabled = passwordResetEnabled();
+
+  // Last OAuth identity (persisted on-device) → "Continue as …" shortcut.
+  const [lastOAuth, setLastOAuth] = useState<LastOAuth | null>(null);
+  useEffect(() => {
+    let active = true;
+    getLastOAuth().then((v) => {
+      if (active) setLastOAuth(v);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Swipe-away on the card forgets the saved identity.
+  const handleDismissLastOAuth = () => {
+    clearLastOAuth();
+    setLastOAuth(null);
+  };
+
+  // New OAuth accounts have no profile yet → route to the username picker.
+  // Cast: typed-routes generates the route union at dev-server start, so a
+  // freshly-added route isn't in it until the next regen — the route is real.
+  const routeIfNeedsUsername = (res: OAuthResult) => {
+    if (res.status === "needs-username") {
+      router.push({
+        pathname: "/(auth)/oauth-username",
+        params: {
+          username: res.suggestedUsername,
+          displayName: res.suggestedDisplayName,
+          photoUrl: res.photoUrl ?? undefined,
+        },
+      } as unknown as Href);
+    }
+  };
 
   const validate = () => {
     const next: LoginErrors = {};
@@ -87,7 +126,7 @@ export default function LoginScreen() {
   const handleGoogle = async () => {
     setSubmitting("google");
     try {
-      await loginWithGoogle();
+      routeIfNeedsUsername(await loginWithGoogle());
     } catch (err) {
       Alert.alert(
         "Google sign-in",
@@ -101,7 +140,7 @@ export default function LoginScreen() {
   const handleApple = async () => {
     setSubmitting("apple");
     try {
-      await loginWithApple();
+      routeIfNeedsUsername(await loginWithApple());
     } catch (err) {
       Alert.alert(
         "Apple sign-in",
@@ -113,43 +152,40 @@ export default function LoginScreen() {
   };
 
   const anyBusy = submitting !== null;
+  const socialBusy =
+    submitting === "apple" ? "apple" : submitting === "google" ? "google" : null;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
-      <KeyboardAvoidingView
-        style={styles.kav}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      <KeyboardAwareScrollView
+        contentContainerStyle={styles.scroll}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        bottomOffset={24}
       >
-        <ScrollView
-          contentContainerStyle={styles.scroll}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.header}>
-            <Text style={styles.brand}>Hidden Plate</Text>
-            <Text style={styles.tagline}>
-              Discover Jamaica&apos;s best-kept food secrets
-            </Text>
-          </View>
+        <AuthHeader
+          title="Welcome back"
+          subtitle="Sign in to keep discovering Jamaica's hidden plates."
+        />
 
-          {Platform.OS === "ios" ? (
-            <Button
-              label="Continue with Apple"
-              onPress={handleApple}
-              variant="secondary"
-              loading={submitting === "apple"}
-              disabled={anyBusy && submitting !== "apple"}
-              style={styles.oauthButton}
+        <View style={styles.actions}>
+          {lastOAuth ? (
+            <ContinueAsButton
+              identity={lastOAuth}
+              loading={submitting === lastOAuth.provider}
+              disabled={anyBusy}
+              onPress={() =>
+                lastOAuth.provider === "google" ? handleGoogle() : handleApple()
+              }
+              onDismiss={handleDismissLastOAuth}
             />
           ) : null}
 
-          <Button
-            label="Continue with Google"
-            onPress={handleGoogle}
-            variant="secondary"
-            loading={submitting === "google"}
-            disabled={anyBusy && submitting !== "google"}
-            style={styles.oauthButton}
+          <SocialAuthButtons
+            onApple={handleApple}
+            onGoogle={handleGoogle}
+            busy={socialBusy}
+            disabled={submitting === "email"}
           />
 
           <View style={styles.divider}>
@@ -201,6 +237,14 @@ export default function LoginScreen() {
             editable={!anyBusy}
           />
 
+          {resetEnabled ? (
+            <View style={styles.forgotRow}>
+              <Link href="/(auth)/forgot-password" style={styles.forgotLink}>
+                Forgot password?
+              </Link>
+            </View>
+          ) : null}
+
           <Button
             label="Sign in"
             onPress={handleEmailLogin}
@@ -208,81 +252,83 @@ export default function LoginScreen() {
             disabled={anyBusy && submitting !== "email"}
             style={styles.submitButton}
           />
+        </View>
 
-          <View style={styles.footer}>
-            <Text style={styles.footerText}>Don&apos;t have an account? </Text>
-            <Link href="/(auth)/signup" replace style={styles.footerLink}>
-              Sign up
-            </Link>
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        <View style={styles.footer}>
+          <Text style={styles.footerText}>Don&apos;t have an account? </Text>
+          <Link href="/(auth)/signup" replace style={styles.footerLink}>
+            Sign up
+          </Link>
+        </View>
+      </KeyboardAwareScrollView>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  kav: {
-    flex: 1,
-  },
-  scroll: {
-    flexGrow: 1,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.xl,
-    paddingBottom: spacing.xl,
-  },
-  header: {
-    alignItems: "center",
-    marginBottom: spacing.xl,
-  },
-  brand: {
-    ...typography.h1,
-    color: colors.primary,
-    marginBottom: spacing.xs,
-  },
-  tagline: {
-    ...typography.body,
-    color: colors.textSecondary,
-    textAlign: "center",
-  },
-  oauthButton: {
-    marginBottom: spacing.sm,
-  },
-  divider: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginVertical: spacing.lg,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: colors.border,
-  },
-  dividerText: {
-    ...typography.caption,
-    color: colors.textMuted,
-    marginHorizontal: spacing.md,
-    textTransform: "uppercase",
-  },
-  submitButton: {
-    marginTop: spacing.sm,
-  },
-  footer: {
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    marginTop: spacing.xl,
-  },
-  footerText: {
-    ...typography.body,
-    color: colors.textSecondary,
-  },
-  footerLink: {
-    ...typography.bodyMedium,
-    color: colors.primary,
-  },
-});
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
+    safe: {
+      flex: 1,
+      backgroundColor: colors.cardBackground,
+    },
+    scroll: {
+      flexGrow: 1,
+      paddingHorizontal: spacing.xl,
+      paddingTop: spacing.xxl,
+      paddingBottom: spacing.xl,
+    },
+    actions: {
+      width: "100%",
+      marginTop: spacing.xl,
+    },
+    divider: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginVertical: spacing.lg,
+    },
+    dividerLine: {
+      flex: 1,
+      height: 1,
+      backgroundColor: colors.border,
+    },
+    dividerText: {
+      fontFamily: fonts.medium,
+      fontSize: T.size.sm,
+      color: colors.textMuted,
+      marginHorizontal: spacing.md,
+      textTransform: "uppercase",
+      letterSpacing: T.tracking.wider,
+    },
+    forgotRow: {
+      alignItems: "flex-end",
+      marginTop: -spacing.xs,
+      marginBottom: spacing.md,
+    },
+    forgotLink: {
+      fontFamily: fonts.bold,
+      fontSize: T.size.sm,
+      color: colors.primary,
+    },
+    submitButton: {
+      marginTop: spacing.sm,
+    },
+    footer: {
+      flexDirection: "row",
+      justifyContent: "center",
+      alignItems: "center",
+      marginTop: "auto",
+      paddingTop: spacing.xl,
+    },
+    footerText: {
+      fontFamily: fonts.regular,
+      fontSize: T.size.sm,
+      color: colors.textSecondary,
+    },
+    footerLink: {
+      fontFamily: fonts.bold,
+      fontSize: T.size.sm,
+      color: colors.primary,
+    },
+  });
+}

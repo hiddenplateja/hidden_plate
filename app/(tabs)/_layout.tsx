@@ -15,9 +15,11 @@
 
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
+import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { colors, fonts } from "@/theme/colors";
+import { fonts, shadows } from "@/theme/colors";
+import { useTheme } from "@/theme/ThemeProvider";
 
 const TAB_BAR_BASE_HEIGHT = 60;
 const TAB_BAR_BASE_PADDING_BOTTOM = 8;
@@ -25,6 +27,7 @@ const TAB_BAR_PADDING_TOP = 6;
 
 export default function TabsLayout() {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
 
   return (
     <Tabs
@@ -51,11 +54,7 @@ export default function TabsLayout() {
         options={{
           title: "Discover",
           tabBarIcon: ({ color, size }) => (
-            <MaterialCommunityIcons
-              name="silverware-fork-knife"
-              size={size}
-              color={color}
-            />
+            <MaterialCommunityIcons name="home-outline" size={size} color={color} />
           ),
         }}
       />
@@ -77,12 +76,29 @@ export default function TabsLayout() {
         name="map"
         options={{
           title: "Map",
-          tabBarIcon: ({ color, size }) => (
-            <MaterialCommunityIcons
-              name="map-outline"
-              size={size}
-              color={color}
-            />
+          // Raised above the other tabs — an elevated circular tile that pops
+          // off the bar (coral when active, light surface when not).
+          tabBarIcon: ({ focused, color }) => (
+            <View
+              style={{
+                width: 46,
+                height: 46,
+                borderRadius: 23,
+                alignItems: "center",
+                justifyContent: "center",
+                transform: [{ translateY: -14 }],
+                borderWidth: 3,
+                borderColor: colors.cardBackground,
+                backgroundColor: focused ? colors.primary : colors.surface,
+                ...shadows.sm,
+              }}
+            >
+              <MaterialCommunityIcons
+                name="map-outline"
+                size={24}
+                color={focused ? colors.textInverse : color}
+              />
+            </View>
           ),
         }}
       />

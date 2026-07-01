@@ -1,5 +1,19 @@
 // src/services/reviews.ts
 // Reviews data layer. Per-document permissions handled here.
+//
+// Content moderation:
+//   - URL/external link rejection is enforced in validateReviewInput.
+//     Client-side rejection is UX; the real boundary is the Appwrite
+//     Function (defense in depth — modified clients can bypass JS checks).
+//
+// Error handling philosophy:
+//   - listReviewsByFollowing / listLatestReviews THROW on failure. They
+//     drive the Community feed which needs to render an error UI rather
+//     than mislead the user with an empty list.
+//   - Stat and "single doc" helpers stay tolerant (returning zeroes/null
+//     on failure) because they're decoration — failing them should not
+//     break the screen, just degrade gracefully. All failures still
+//     report to Sentry so we know they're happening.
 
 import {
   AppwriteException,
@@ -10,12 +24,16 @@ import {
 } from "react-native-appwrite";
 
 import { account, appwriteConfig, databases } from "@/services/appwrite";
+import { captureError } from "@/services/sentry";
 import type {
   CreateReviewInput,
+  RatingDistribution,
+  RatingValue,
   Review,
   ReviewPage,
   UpdateReviewInput,
 } from "@/types/review";
+import { URL_REJECTION_MESSAGE, containsUrl } from "@/utils/contentValidation";
 
 // ---------- Errors ----------
 
@@ -94,6 +112,10 @@ function validateReviewInput(
     if (input.comment.length > 2000) {
       throw new ReviewError("Comment must be 2000 characters or less.");
     }
+    // Reject external links. Done here so both create + update get the check.
+    if (containsUrl(input.comment)) {
+      throw new ReviewError(URL_REJECTION_MESSAGE);
+    }
   }
   if ("imageIds" in input && input.imageIds) {
     if (input.imageIds.length > 6) {
@@ -147,6 +169,11 @@ export async function listReviewsForRestaurant(
       nextCursor: lastId,
     };
   } catch (err) {
+    captureError(err, {
+      service: "reviews",
+      op: "listReviewsForRestaurant",
+      restaurantId,
+    });
     throw toReviewError(err, "Failed to load reviews.");
   }
 }
@@ -179,12 +206,24 @@ export async function listReviewsByUser(
       nextCursor: lastId,
     };
   } catch (err) {
+    captureError(err, {
+      service: "reviews",
+      op: "listReviewsByUser",
+      userId,
+    });
     throw toReviewError(err, "Failed to load reviews.");
   }
 }
 
 /**
- * Fetch a single review by ID. Used by the dedicated comment screen.
+ * Fetch a single review by ID. Returns null when not found OR when the
+ * read fails. Callers that need to differentiate "missing" from "errored"
+ * shouldn't use this helper — use databases.getDocument directly and
+ * handle errors explicitly.
+ *
+ * Tolerant: many callers (comment screen, review detail) treat null as
+ * "review was deleted" and route accordingly. Throwing would force every
+ * caller to catch.
  */
 export async function getReviewById(reviewId: string): Promise<Review | null> {
   try {
@@ -195,20 +234,19 @@ export async function getReviewById(reviewId: string): Promise<Review | null> {
     );
     return mapDoc(doc as unknown as ReviewDoc);
   } catch (err) {
-    console.warn("[reviews] getReviewById failed:", err);
+    captureError(err, {
+      service: "reviews",
+      op: "getReviewById",
+      reviewId,
+    });
     return null;
   }
 }
 
 /**
- * Get aggregate stats for a restaurant: total visible reviews + average.
- * Computed on demand from the reviews collection (Option C — no
- * denormalized counter on the restaurant doc, since users can't write
- * to the restaurants collection).
- *
- * Cheap query: only fetches the `rating` field, not full review docs.
- * For very popular restaurants (1000+ reviews) this would be the moment
- * to switch to a Cloud Function that maintains a counter.
+ * Aggregate stats for a restaurant. Tolerant: returns 0/0 on failure
+ * (with Sentry report). The rating badge will show "—" or 0.0 rather
+ * than the whole restaurant detail card erroring out.
  */
 export async function getRestaurantReviewStats(
   restaurantId: string,
@@ -232,22 +270,80 @@ export async function getRestaurantReviewStats(
       count === 0 ? 0 : ratings.reduce((a, b) => a + b, 0) / count;
     return { count, average: Math.round(average * 10) / 10 };
   } catch (err) {
-    console.warn("[reviews] failed to compute stats:", err);
+    captureError(err, {
+      service: "reviews",
+      op: "getRestaurantReviewStats",
+      restaurantId,
+    });
     return { count: 0, average: 0 };
   }
 }
+
 /**
- * Batch-fetch review stats for many restaurants at once.
+ * Full rating distribution for a restaurant — count, average, and a
+ * per-star bucket tally (how many 5-star reviews, 4-star, etc). Powers the
+ * rating histogram on the all-reviews screen.
  *
- * One Appwrite query (filtered by restaurantId IN [...]) instead of
- * N separate per-restaurant queries. Aggregates client-side.
- *
- * Returns a Map keyed by restaurantId. Restaurants with no reviews are
- * absent from the map — callers should treat that as { count: 0, average: 0 }.
- *
- * Used by the home screen and "See all" lists to display accurate ratings
- * on restaurant cards. (The denormalized averageRating/reviewCount on the
- * restaurant doc itself is stale because no Cloud Function maintains it.)
+ * Tolerant like the other stat helpers: returns zeroed buckets on failure
+ * (with Sentry report) so the histogram can degrade to "no ratings" rather
+ * than break the screen. Reads up to 5000 ratings in one shot — same cap as
+ * getRestaurantReviewStats.
+ */
+export async function getRestaurantRatingDistribution(
+  restaurantId: string,
+): Promise<RatingDistribution> {
+  const emptyBuckets = (): Record<RatingValue, number> => ({
+    1: 0,
+    2: 0,
+    3: 0,
+    4: 0,
+    5: 0,
+  });
+
+  try {
+    const res = await databases.listDocuments(
+      appwriteConfig.databaseId,
+      appwriteConfig.collections.reviews,
+      [
+        Query.equal("restaurantId", restaurantId),
+        Query.equal("isHidden", false),
+        Query.limit(5000),
+        Query.select(["rating"]),
+      ],
+    );
+
+    const buckets = emptyBuckets();
+    let sum = 0;
+    for (const doc of res.documents) {
+      const rating = (doc as unknown as { rating: number }).rating;
+      if (Number.isInteger(rating) && rating >= 1 && rating <= 5) {
+        buckets[rating as RatingValue] += 1;
+        sum += rating;
+      }
+    }
+
+    // count == sum of buckets, so average and bars always agree.
+    const count =
+      buckets[1] + buckets[2] + buckets[3] + buckets[4] + buckets[5];
+    const average = count === 0 ? 0 : sum / count;
+
+    return { count, average: Math.round(average * 10) / 10, buckets };
+  } catch (err) {
+    captureError(err, {
+      service: "reviews",
+      op: "getRestaurantRatingDistribution",
+      restaurantId,
+    });
+    return { count: 0, average: 0, buckets: emptyBuckets() };
+  }
+}
+
+/**
+ * Batch-fetch review stats for many restaurants at once. Tolerant: a
+ * failure returns an empty map (with Sentry) rather than throwing.
+ * Restaurants without entries in the result map render with neutral
+ * defaults (count=0, average=0), which is correct UX — the card just
+ * shows no rating badge instead of breaking.
  */
 export async function getReviewStatsForRestaurants(
   restaurantIds: string[],
@@ -258,9 +354,6 @@ export async function getReviewStatsForRestaurants(
   const unique = Array.from(new Set(restaurantIds));
 
   try {
-    // Fetch all reviews for these restaurants in one query.
-    // We only need restaurantId + rating, so select just those fields.
-    // limit 5000 handles plenty of restaurants × reviews each.
     const res = await databases.listDocuments(
       appwriteConfig.databaseId,
       appwriteConfig.collections.reviews,
@@ -272,7 +365,6 @@ export async function getReviewStatsForRestaurants(
       ],
     );
 
-    // Group ratings by restaurantId
     const buckets = new Map<string, number[]>();
     for (const doc of res.documents) {
       const d = doc as unknown as { restaurantId: string; rating: number };
@@ -284,7 +376,6 @@ export async function getReviewStatsForRestaurants(
       }
     }
 
-    // Compute averages
     for (const [restaurantId, ratings] of buckets) {
       const count = ratings.length;
       const average = ratings.reduce((a, b) => a + b, 0) / count;
@@ -296,16 +387,15 @@ export async function getReviewStatsForRestaurants(
 
     return result;
   } catch (err) {
-    console.warn("[reviews] batch stats failed:", err);
+    captureError(err, {
+      service: "reviews",
+      op: "getReviewStatsForRestaurants",
+      count: restaurantIds.length,
+    });
     return result;
   }
 }
 
-/**
- * Create a review. Per-document permissions:
- *   - Read: any logged-in user
- *   - Update/Delete: only the author
- */
 export async function createReview(input: CreateReviewInput): Promise<Review> {
   validateReviewInput(input);
 
@@ -341,6 +431,11 @@ export async function createReview(input: CreateReviewInput): Promise<Review> {
 
     return mapDoc(doc as unknown as ReviewDoc);
   } catch (err) {
+    captureError(err, {
+      service: "reviews",
+      op: "createReview",
+      restaurantId: input.restaurantId,
+    });
     throw toReviewError(err, "Failed to post review.");
   }
 }
@@ -365,6 +460,11 @@ export async function updateReview(
     );
     return mapDoc(doc as unknown as ReviewDoc);
   } catch (err) {
+    captureError(err, {
+      service: "reviews",
+      op: "updateReview",
+      reviewId,
+    });
     throw toReviewError(err, "Failed to update review.");
   }
 }
@@ -377,13 +477,15 @@ export async function deleteReview(reviewId: string): Promise<void> {
       reviewId,
     );
   } catch (err) {
+    captureError(err, {
+      service: "reviews",
+      op: "deleteReview",
+      reviewId,
+    });
     throw toReviewError(err, "Failed to delete review.");
   }
 }
 
-/**
- * Has the current user already reviewed this restaurant?
- */
 export async function getMyReviewForRestaurant(
   restaurantId: string,
 ): Promise<Review | null> {
@@ -406,24 +508,27 @@ export async function getMyReviewForRestaurant(
     );
     const doc = res.documents[0] as unknown as ReviewDoc | undefined;
     return doc ? mapDoc(doc) : null;
-  } catch {
+  } catch (err) {
+    captureError(err, {
+      service: "reviews",
+      op: "getMyReviewForRestaurant",
+      restaurantId,
+    });
     return null;
   }
 }
 
 /**
- * Compute aggregate stats for a user's reviews.
- * Used by the profile screen's stats row.
- *
- * Cheap query: only fetches what we need to compute.
+ * Aggregate stats for a user's reviews. Tolerant: returns zeroes on
+ * failure (with Sentry) rather than throwing. The profile stat row
+ * shows "0 / 0.0 / 0 parishes" rather than breaking the whole header.
  */
 export async function getUserReviewStats(userId: string): Promise<{
   reviewCount: number;
   averageRating: number;
-  parishesVisited: number; // distinct parishes reviewed
+  parishesVisited: number;
 }> {
   try {
-    // First get all the user's reviews
     const res = await databases.listDocuments(
       appwriteConfig.databaseId,
       appwriteConfig.collections.reviews,
@@ -442,7 +547,6 @@ export async function getUserReviewStats(userId: string): Promise<{
     const average =
       count === 0 ? 0 : ratings.reduce((a, b) => a + b, 0) / count;
 
-    // Count distinct parishes by looking up the restaurants
     let parishesVisited = 0;
     if (count > 0) {
       const restaurantIds = Array.from(
@@ -452,7 +556,6 @@ export async function getUserReviewStats(userId: string): Promise<{
           ),
         ),
       );
-      // Use the batch helper from restaurants service
       const { getRestaurantsByIds } = await import("@/services/restaurants");
       const restaurantMap = await getRestaurantsByIds(restaurantIds);
       const parishes = new Set<string>();
@@ -468,7 +571,11 @@ export async function getUserReviewStats(userId: string): Promise<{
       parishesVisited,
     };
   } catch (err) {
-    console.warn("[reviews] user stats failed:", err);
+    captureError(err, {
+      service: "reviews",
+      op: "getUserReviewStats",
+      userId,
+    });
     return { reviewCount: 0, averageRating: 0, parishesVisited: 0 };
   }
 }
@@ -479,7 +586,9 @@ export async function getUserReviewStats(userId: string): Promise<{
  *
  * Returns reviews from all followed users merged and sorted by date.
  * If followingIds is empty, returns an empty page immediately
- * (saves a round trip).
+ * (saves a round trip — not an error case).
+ *
+ * Throws on failure. The Community feed needs to render an error UI.
  */
 export async function listReviewsByFollowing(
   followingIds: string[],
@@ -517,8 +626,12 @@ export async function listReviewsByFollowing(
       nextCursor: lastId,
     };
   } catch (err) {
-    console.warn("[reviews] listReviewsByFollowing failed:", err);
-    return { items: [], total: 0, hasMore: false, nextCursor: null };
+    captureError(err, {
+      service: "reviews",
+      op: "listReviewsByFollowing",
+      followingCount: followingIds.length,
+    });
+    throw toReviewError(err, "Couldn't load reviews from people you follow.");
   }
 }
 
@@ -527,6 +640,8 @@ export async function listReviewsByFollowing(
  * feed's "Latest" (FYP) tab.
  *
  * Simple chronological sort. No ranking algorithm — v1.
+ *
+ * Throws on failure. The Community feed needs to render an error UI.
  */
 export async function listLatestReviews(
   options: {
@@ -558,7 +673,10 @@ export async function listLatestReviews(
       nextCursor: lastId,
     };
   } catch (err) {
-    console.warn("[reviews] listLatestReviews failed:", err);
-    return { items: [], total: 0, hasMore: false, nextCursor: null };
+    captureError(err, {
+      service: "reviews",
+      op: "listLatestReviews",
+    });
+    throw toReviewError(err, "Couldn't load reviews.");
   }
 }

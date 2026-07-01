@@ -14,13 +14,9 @@ import {
 } from "react-native";
 
 import { Avatar } from "@/components/Avatar";
-import {
-    colors,
-    fonts,
-    radius,
-    spacing,
-    typographyTokens as T,
-} from "@/theme/colors";
+import { fonts, radius, spacing, typographyTokens as T } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 import type { User } from "@/types/user";
 
 interface UserRowProps {
@@ -40,6 +36,7 @@ export function UserRow({
   onPress,
   onToggleFollow,
 }: UserRowProps) {
+  const { styles, colors } = useThemedStyles(makeStyles);
   return (
     <Pressable
       onPress={onPress}
@@ -108,7 +105,9 @@ export function UserRow({
   );
 }
 
-const styles = StyleSheet.create({
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
@@ -188,4 +187,5 @@ const styles = StyleSheet.create({
     fontSize: T.size.xs,
     color: colors.textMuted,
   },
-});
+  });
+}

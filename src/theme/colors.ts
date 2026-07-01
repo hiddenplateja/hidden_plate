@@ -97,12 +97,45 @@ export const size = {
 // Typography — Roboto-based.
 // Font families: set up in src/theme/fonts.ts (loaded once at app start).
 // Sizes/leading/tracking/weights collected here for use across the app.
-export const fonts = {
-  regular: "Roboto_400Regular",
-  medium: "Roboto_500Medium",
-  bold: "Roboto_700Bold",
-  black: "Roboto_900Black",
+// ── Font experiment ──────────────────────────────────────────────────────
+// Flip ACTIVE_FONT to compare the candidates app-wide. Everything reads the
+// `fonts` token below, so changing this one line re-fonts every screen.
+//
+// Weights are mapped one notch LIGHTER for the geometric sans options so they
+// don't read too heavy: the semantic "bold" → 600 SemiBold, "black" → 700 Bold
+// (vs Roboto's original 700/900). Loaded weights live in theme/fonts.ts.
+const FONT_SETS = {
+  inter: {
+    regular: "Inter_400Regular",
+    medium: "Inter_500Medium",
+    bold: "Inter_600SemiBold",
+    black: "Inter_700Bold",
+  },
+  jakarta: {
+    regular: "PlusJakartaSans_400Regular",
+    medium: "PlusJakartaSans_500Medium",
+    bold: "PlusJakartaSans_600SemiBold",
+    black: "PlusJakartaSans_700Bold",
+  },
+  manrope: {
+    regular: "Manrope_400Regular",
+    medium: "Manrope_500Medium",
+    bold: "Manrope_600SemiBold",
+    black: "Manrope_700Bold",
+  },
+  // Original baseline — keeps Roboto's heavier 700/900 for fallback.
+  roboto: {
+    regular: "Roboto_400Regular",
+    medium: "Roboto_500Medium",
+    bold: "Roboto_700Bold",
+    black: "Roboto_900Black",
+  },
 } as const;
+
+// ← Change this to "jakarta" | "manrope" | "roboto" to compare.
+const ACTIVE_FONT: keyof typeof FONT_SETS = "manrope";
+
+export const fonts = FONT_SETS[ACTIVE_FONT];
 
 export const typographyTokens = {
   size: {

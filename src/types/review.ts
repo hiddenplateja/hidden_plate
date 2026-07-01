@@ -34,3 +34,11 @@ export interface ReviewPage {
   hasMore: boolean;
   nextCursor: string | null;
 }
+
+export type RatingValue = 1 | 2 | 3 | 4 | 5;
+
+export interface RatingDistribution {
+  count: number;
+  average: number;
+  buckets: Record<RatingValue, number>;
+}

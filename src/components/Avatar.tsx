@@ -15,7 +15,9 @@ import { Image } from "expo-image";
 import { StyleSheet, Text, View } from "react-native";
 
 import { getAvatarUrl } from "@/services/storage";
-import { colors, fonts } from "@/theme/colors";
+import { fonts } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 
 interface AvatarProps {
   fileId: string | null | undefined;
@@ -58,6 +60,7 @@ export function Avatar({
   userId,
   size = 40,
 }: AvatarProps) {
+  const { styles } = useThemedStyles(makeStyles);
   const url = getAvatarUrl(fileId);
   const dimensionStyle = {
     width: size,
@@ -87,7 +90,9 @@ export function Avatar({
   );
 }
 
-const styles = StyleSheet.create({
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   image: {
     backgroundColor: colors.pageBackground,
   },
@@ -100,4 +105,5 @@ const styles = StyleSheet.create({
     color: colors.white,
     letterSpacing: -0.3,
   },
-});
+  });
+}

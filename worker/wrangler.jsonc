@@ -1,0 +1,56 @@
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "hidden-plate-pay",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-06-08",
+	"observability": {
+		"enabled": true,
+	},
+	"upload_source_maps": true,
+	"compatibility_flags": ["nodejs_compat"],
+
+	/**
+	 * Non-secret config (safe to commit). These are the SAME public IDs already
+	 * in your app's .env.local — copy them across exactly (especially the
+	 * regional endpoint, e.g. https://nyc.cloud.appwrite.io/v1).
+	 *
+	 * Secrets are NOT here. Set them with:
+	 *   npx wrangler secret put APPWRITE_API_KEY
+	 *   npx wrangler secret put REVENUECAT_WEBHOOK_AUTH
+	 * For local `wrangler dev`, put those same keys in worker/.dev.vars instead.
+	 */
+	"vars": {
+		"APPWRITE_ENDPOINT": "https://nyc.cloud.appwrite.io/v1",
+		"APPWRITE_PROJECT_ID": "69fe8b7f003e6deb2878",
+		"APPWRITE_DATABASE_ID": "69fe8c5e0001413af1a2",
+		"RESTAURANTS_COLLECTION_ID": "69fea2d900179ae66a3b",
+		"APP_CONFIG_COLLECTION_ID": "6a1e2eeb00155d8067bb",
+		"FEATURE_PURCHASES_COLLECTION_ID": "6a27069d000c7b633446",
+
+		// Email verification (OTP via Resend). Create the emailOtps collection
+		// and set its id here. RESEND_FROM must be on a domain verified in Resend.
+		"EMAIL_OTPS_COLLECTION_ID": "6a30ab1100241fa5d0ac",
+		"RESEND_FROM": "Hidden Plate <noreply@nutinbutheat.com>",
+		"OTP_TTL_MINUTES": "10",
+	},
+
+	/**
+	 * Per-IP rate limits (Cloudflare Workers Rate Limiting API) for the
+	 * email/OTP endpoints. These back-stop the per-EMAIL cooldown in the handler:
+	 * without them, one IP could rotate through many addresses to email-bomb
+	 * arbitrary inboxes and burn Resend quota. Free on all plans, no extra storage.
+	 *
+	 *   - limit  = requests allowed per window, per key (we key on client IP)
+	 *   - period = window in seconds; MUST be 10 or 60
+	 *   - namespace_id = arbitrary unique positive integer per limiter
+	 */
+	"ratelimits": [
+		{ "name": "RL_EMAIL_SEND", "namespace_id": "1001", "simple": { "limit": 5, "period": 60 } },
+		{ "name": "RL_EMAIL_VERIFY", "namespace_id": "1002", "simple": { "limit": 10, "period": 60 } },
+		{ "name": "RL_EMAIL_CONFIRM", "namespace_id": "1003", "simple": { "limit": 10, "period": 60 } },
+	],
+}

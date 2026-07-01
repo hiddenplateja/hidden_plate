@@ -24,36 +24,47 @@ import { useCallback, useEffect, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
-    KeyboardAvoidingView,
-    Platform,
     Pressable,
-    ScrollView,
     StyleSheet,
     Text,
     TextInput,
     View,
 } from "react-native";
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Avatar } from "@/components/Avatar";
 import { useAuth } from "@/hooks/useAuth";
 import { compressAvatar, deleteImage, uploadAvatar } from "@/services/storage";
 import {
+    getUserPreferences,
+    updateUserPreferences,
+} from "@/services/userPreferences";
+import {
     getUserById,
     updateMyProfile,
     validateBio,
     validateDisplayName,
+    validateUsername,
 } from "@/services/users";
-import {
-    colors,
-    fonts,
-    radius,
-    spacing,
-    typographyTokens as T,
-} from "@/theme/colors";
+import { fonts, radius, spacing, typographyTokens as T } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 import type { User } from "@/types/user";
 
 const BIO_MAX = 280;
+
+// Per-field change cooldowns. Stored as last-changed timestamps in account
+// prefs; the field locks until the cooldown elapses. (Soft, client-side limit —
+// the profile doc is written directly by the SDK.)
+const DAY_MS = 24 * 60 * 60 * 1000;
+const USERNAME_COOLDOWN_DAYS = 30;
+const DISPLAY_NAME_COOLDOWN_DAYS = 7;
+
+// Whole days remaining until `ts` (epoch ms), floored at 1 so we never say "0".
+function daysUntil(ts: number): number {
+  return Math.max(1, Math.ceil((ts - Date.now()) / DAY_MS));
+}
 
 // Avatar field state — three cases handled cleanly via discriminated union.
 type AvatarState =
@@ -63,21 +74,44 @@ type AvatarState =
 
 export default function EditProfileScreen() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, refresh } = useAuth();
+  const { styles, colors } = useThemedStyles(makeStyles);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [profile, setProfile] = useState<User | null>(null);
 
+  const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [bio, setBio] = useState("");
+  // Last-changed timestamps (from prefs) → drive the per-field cooldown locks.
+  const [usernameChangedAt, setUsernameChangedAt] = useState<string | null>(
+    null,
+  );
+  const [displayNameChangedAt, setDisplayNameChangedAt] = useState<
+    string | null
+  >(null);
   const [avatarState, setAvatarState] = useState<AvatarState>({
     kind: "unchanged",
     fileId: null,
   });
 
+  const [usernameError, setUsernameError] = useState<string | null>(null);
   const [displayNameError, setDisplayNameError] = useState<string | null>(null);
   const [bioError, setBioError] = useState<string | null>(null);
+
+  // Cooldown gates — a field is locked until (lastChange + cooldown). A null
+  // timestamp (never changed) leaves it unlocked.
+  const now = Date.now();
+  const usernameUnlockAt = usernameChangedAt
+    ? new Date(usernameChangedAt).getTime() + USERNAME_COOLDOWN_DAYS * DAY_MS
+    : 0;
+  const displayNameUnlockAt = displayNameChangedAt
+    ? new Date(displayNameChangedAt).getTime() +
+      DISPLAY_NAME_COOLDOWN_DAYS * DAY_MS
+    : 0;
+  const usernameLocked = now < usernameUnlockAt;
+  const displayNameLocked = now < displayNameUnlockAt;
 
   // Load current profile data
   useEffect(() => {
@@ -93,12 +127,18 @@ export default function EditProfileScreen() {
           return;
         }
         setProfile(fresh);
+        setUsername(fresh.username);
         setDisplayName(fresh.displayName);
         setBio(fresh.bio ?? "");
         setAvatarState({
           kind: "unchanged",
           fileId: fresh.avatarUrl ?? null,
         });
+        // Cooldown timestamps live in account prefs (no schema change).
+        const prefs = await getUserPreferences();
+        if (cancelled) return;
+        setUsernameChangedAt(prefs.usernameChangedAt);
+        setDisplayNameChangedAt(prefs.displayNameChangedAt);
       } catch (err) {
         Alert.alert(
           "Couldn't load profile",
@@ -116,11 +156,12 @@ export default function EditProfileScreen() {
 
   const hasChanges = useCallback((): boolean => {
     if (!profile) return false;
+    if (username.trim().toLowerCase() !== profile.username) return true;
     if (displayName.trim() !== profile.displayName) return true;
     if ((bio.trim() || null) !== (profile.bio ?? null)) return true;
     if (avatarState.kind !== "unchanged") return true;
     return false;
-  }, [profile, displayName, bio, avatarState]);
+  }, [profile, username, displayName, bio, avatarState]);
 
   const handleCancel = useCallback(() => {
     if (!hasChanges()) {
@@ -202,12 +243,34 @@ export default function EditProfileScreen() {
   const handleSave = useCallback(async () => {
     if (!profile) return;
 
-    // Validate
-    const nameErr = validateDisplayName(displayName);
+    const trimmedName = displayName.trim();
+    const trimmedUsername = username.trim().toLowerCase();
+    const nameChanged = trimmedName !== profile.displayName;
+    const usernameChanged = trimmedUsername !== profile.username;
+
+    // Defensive cooldown enforcement — the inputs are disabled while locked, so
+    // this only trips if a locked field somehow changed.
+    if (usernameChanged && usernameLocked) {
+      setUsernameError(
+        `You can change your username again in ${daysUntil(usernameUnlockAt)} days.`,
+      );
+      return;
+    }
+    if (nameChanged && displayNameLocked) {
+      setDisplayNameError(
+        `You can change your display name again in ${daysUntil(displayNameUnlockAt)} days.`,
+      );
+      return;
+    }
+
+    // Validate only the fields that actually changed.
+    const usernameErr = usernameChanged ? validateUsername(username) : null;
+    const nameErr = nameChanged ? validateDisplayName(displayName) : null;
     const bioErr = validateBio(bio);
+    setUsernameError(usernameErr);
     setDisplayNameError(nameErr);
     setBioError(bioErr);
-    if (nameErr || bioErr) return;
+    if (usernameErr || nameErr || bioErr) return;
 
     if (!hasChanges()) {
       router.back();
@@ -230,14 +293,31 @@ export default function EditProfileScreen() {
       }
       // unchanged: leave newAvatarFileId as undefined — won't be in update payload
 
-      // Update the profile doc
+      // Update the profile doc — only send the name fields that changed (so a
+      // locked-but-untouched field is never written).
       await updateMyProfile({
-        displayName: displayName.trim(),
+        ...(usernameChanged ? { username: trimmedUsername } : {}),
+        ...(nameChanged ? { displayName: trimmedName } : {}),
         bio: bio.trim() || null,
         ...(newAvatarFileId !== undefined
           ? { avatarUrl: newAvatarFileId }
           : {}),
       });
+
+      // Record the change timestamps (starts the cooldown). Best-effort: the
+      // profile already saved, so a prefs hiccup just means the soft limit
+      // didn't start — not worth failing the save.
+      if (usernameChanged || nameChanged) {
+        const nowIso = new Date().toISOString();
+        try {
+          await updateUserPreferences({
+            ...(usernameChanged ? { usernameChangedAt: nowIso } : {}),
+            ...(nameChanged ? { displayNameChangedAt: nowIso } : {}),
+          });
+        } catch {
+          // soft limit — ignore
+        }
+      }
 
       // Best-effort: delete the old avatar file after the update succeeded.
       // If this fails, leave an orphan — better than failing the save.
@@ -245,6 +325,13 @@ export default function EditProfileScreen() {
         deleteImage(fileIdToDelete).catch(() => {
           // Swallow — orphan cleanup is non-critical
         });
+      }
+
+      // Propagate the new username/display name to the rest of the app.
+      try {
+        await refresh();
+      } catch {
+        // non-fatal — other screens refetch on focus
       }
 
       router.back();
@@ -256,7 +343,20 @@ export default function EditProfileScreen() {
     } finally {
       setSaving(false);
     }
-  }, [profile, displayName, bio, avatarState, hasChanges, router]);
+  }, [
+    profile,
+    username,
+    displayName,
+    bio,
+    avatarState,
+    hasChanges,
+    router,
+    refresh,
+    usernameLocked,
+    displayNameLocked,
+    usernameUnlockAt,
+    displayNameUnlockAt,
+  ]);
 
   if (loading || !user || !profile) {
     return (
@@ -281,10 +381,7 @@ export default function EditProfileScreen() {
   const bioWarning = bioRemaining < 20;
 
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
+    <View style={styles.flex}>
       <SafeAreaView style={styles.safe} edges={["top"]}>
         {/* Header */}
         <View style={styles.header}>
@@ -315,9 +412,11 @@ export default function EditProfileScreen() {
           </Pressable>
         </View>
 
-        <ScrollView
+        <KeyboardAwareScrollView
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          bottomOffset={24}
         >
           {/* Avatar section */}
           <View style={styles.avatarSection}>
@@ -384,43 +483,104 @@ export default function EditProfileScreen() {
             </View>
           </View>
 
-          {/* Username (read-only — usernames are immutable in our model) */}
+          {/* Username — editable once every 30 days */}
           <View style={styles.field}>
             <Text style={styles.label}>Username</Text>
-            <View style={styles.readOnlyInput}>
-              <Text style={styles.readOnlyText}>@{profile.username}</Text>
-              <MaterialCommunityIcons
-                name="lock-outline"
-                size={16}
-                color={colors.textMuted}
-              />
-            </View>
-            <Text style={styles.hint}>Username can&apos;t be changed.</Text>
+            {usernameLocked ? (
+              <>
+                <View style={styles.readOnlyInput}>
+                  <Text style={styles.readOnlyText}>@{profile.username}</Text>
+                  <MaterialCommunityIcons
+                    name="lock-outline"
+                    size={16}
+                    color={colors.textMuted}
+                  />
+                </View>
+                <Text style={styles.hint}>
+                  You can change your username again in{" "}
+                  {daysUntil(usernameUnlockAt)} days.
+                </Text>
+              </>
+            ) : (
+              <>
+                <View
+                  style={[
+                    styles.inputRow,
+                    usernameError ? styles.inputError : null,
+                  ]}
+                >
+                  <Text style={styles.inputPrefix}>@</Text>
+                  <TextInput
+                    value={username}
+                    onChangeText={(t) => {
+                      setUsername(t.toLowerCase().replace(/\s/g, ""));
+                      if (usernameError) setUsernameError(null);
+                    }}
+                    style={styles.inputFlex}
+                    placeholder="username"
+                    placeholderTextColor={colors.textMuted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    maxLength={20}
+                    editable={!saving}
+                  />
+                </View>
+                {usernameError ? (
+                  <Text style={styles.errorText}>{usernameError}</Text>
+                ) : (
+                  <Text style={styles.hint}>
+                    Lowercase letters, numbers, underscore. Changeable once every
+                    30 days.
+                  </Text>
+                )}
+              </>
+            )}
           </View>
 
-          {/* Display name */}
+          {/* Display name — editable once every 7 days */}
           <View style={styles.field}>
             <Text style={styles.label}>Display name</Text>
-            <TextInput
-              value={displayName}
-              onChangeText={(t) => {
-                setDisplayName(t);
-                if (displayNameError) setDisplayNameError(null);
-              }}
-              style={[
-                styles.input,
-                displayNameError ? styles.inputError : null,
-              ]}
-              placeholder="Your name"
-              placeholderTextColor={colors.textMuted}
-              autoCapitalize="words"
-              autoCorrect={false}
-              maxLength={50}
-              editable={!saving}
-            />
-            {displayNameError ? (
-              <Text style={styles.errorText}>{displayNameError}</Text>
-            ) : null}
+            {displayNameLocked ? (
+              <>
+                <View style={styles.readOnlyInput}>
+                  <Text style={styles.readOnlyText}>{profile.displayName}</Text>
+                  <MaterialCommunityIcons
+                    name="lock-outline"
+                    size={16}
+                    color={colors.textMuted}
+                  />
+                </View>
+                <Text style={styles.hint}>
+                  You can change your display name again in{" "}
+                  {daysUntil(displayNameUnlockAt)} days.
+                </Text>
+              </>
+            ) : (
+              <>
+                <TextInput
+                  value={displayName}
+                  onChangeText={(t) => {
+                    setDisplayName(t);
+                    if (displayNameError) setDisplayNameError(null);
+                  }}
+                  style={[
+                    styles.input,
+                    displayNameError ? styles.inputError : null,
+                  ]}
+                  placeholder="Your name"
+                  placeholderTextColor={colors.textMuted}
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                  maxLength={50}
+                  editable={!saving}
+                />
+                {displayNameError ? (
+                  <Text style={styles.errorText}>{displayNameError}</Text>
+                ) : (
+                  <Text style={styles.hint}>Changeable once every 7 days.</Text>
+                )}
+              </>
+            )}
           </View>
 
           {/* Bio */}
@@ -477,9 +637,9 @@ export default function EditProfileScreen() {
               To change your email, contact support.
             </Text>
           </View>
-        </ScrollView>
+        </KeyboardAwareScrollView>
       </SafeAreaView>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -488,7 +648,9 @@ type AvatarPreviewKind =
   | { type: "fallback" }
   | { type: "stored"; fileId: string | null };
 
-const styles = StyleSheet.create({
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   flex: { flex: 1 },
   safe: { flex: 1, backgroundColor: colors.pageBackground },
   loadingContainer: {
@@ -621,6 +783,29 @@ const styles = StyleSheet.create({
   inputError: {
     borderColor: colors.error,
   },
+  // Username row: an "@" prefix sitting inside the same box as the input.
+  inputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.pageBackground,
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.divider,
+  },
+  inputPrefix: {
+    fontFamily: fonts.regular,
+    fontSize: T.size.base,
+    color: colors.textMuted,
+  },
+  inputFlex: {
+    flex: 1,
+    fontFamily: fonts.regular,
+    fontSize: T.size.base,
+    color: colors.textPrimary,
+    paddingVertical: spacing.md,
+    marginLeft: 2,
+  },
   bioInput: {
     minHeight: 100,
     paddingTop: spacing.md,
@@ -653,4 +838,5 @@ const styles = StyleSheet.create({
     color: colors.error,
     marginTop: spacing.xs,
   },
-});
+  });
+}

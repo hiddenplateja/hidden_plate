@@ -11,18 +11,24 @@
 //   - listSavedRestaurants returns saved docs with restaurant data hydrated.
 //   - Live review stats merged in via getReviewStatsForRestaurants
 //     (denormalized averageRating/reviewCount on the restaurant doc is stale).
-//   - Each row uses RestaurantImageCard (full-bleed image + overlay).
+//   - Laid out as a 2-column grid of RestaurantSmallCard (compact image + info).
 //   - Reload on focus to catch new saves from detail screen.
 //
 // Visuals match Community: whole screen is one white surface, sub-tabs
 // use the underline style (icon + text, grey when inactive, bold + blue
 // underline when active). Filters sit directly under the tab row.
+//
+// Failure handling:
+//   When the primary fetch fails we show ErrorState with retry — same
+//   pattern as Community + restaurant detail. Pre-patch, this was the
+//   worst silent failure in the app: an offline user would see "No
+//   favorites yet" identical to a brand-new user, making them think
+//   their saves had vanished.
 
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator,
   FlatList,
   Modal,
   Pressable,
@@ -30,33 +36,32 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { RestaurantImageCard } from "@/components/RestaurantImageCard";
-import { getReviewStatsForRestaurants } from "@/services/reviews";
-import { listSavedRestaurants, type ListType } from "@/services/saved";
+import { CategoryChips, TileChip } from "@/components/CategoryChips";
+import { ErrorState } from "@/components/ErrorState";
 import {
-  colors,
+  RestaurantSmallCard,
+  RestaurantSmallCardSkeleton,
+} from "@/components/RestaurantSmallCard";
+import { useSavedRestaurants, type SavedItem } from "@/hooks/useSaved";
+import { listsEnabled } from "@/services/lists";
+import { type ListType } from "@/services/saved";
+import {
   fonts,
   radius,
   shadows,
-  size,
   spacing,
   typographyTokens as T,
 } from "@/theme/colors";
-import type { Restaurant } from "@/types/restaurant";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
-
-interface SavedItem {
-  savedId: string;
-  /** When this saved doc was created (used for "Newest saved" sort) */
-  savedAt: string;
-  restaurant: Restaurant | null;
-}
 
 interface TabConfig {
   type: ListType;
@@ -103,15 +108,6 @@ const TABS: TabConfig[] = [
   },
 ];
 
-const CATEGORIES = [
-  { id: "all", label: "All", icon: "silverware-fork-knife" },
-  { id: "jerk", label: "Jerk", icon: "fire" },
-  { id: "seafood", label: "Seafood", icon: "fish" },
-  { id: "patties", label: "Patties", icon: "pie" },
-  { id: "ital", label: "Ital", icon: "leaf" },
-  { id: "sweets", label: "Sweets", icon: "cupcake" },
-] as const;
-
 const SORT_OPTIONS: SortOption[] = [
   { key: "newest_saved", label: "Newest saved", icon: "clock-outline" },
   { key: "recent_added", label: "Recently added", icon: "calendar-plus" },
@@ -119,16 +115,27 @@ const SORT_OPTIONS: SortOption[] = [
   { key: "name", label: "A to Z", icon: "sort-alphabetical-ascending" },
 ];
 
+// Stable empty fallback so the filter memos don't churn while a tab loads.
+const EMPTY_SAVED: SavedItem[] = [];
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function SavedScreen() {
   const router = useRouter();
   const searchInputRef = useRef<TextInput>(null);
 
-  const [activeTab, setActiveTab] = useState<ListType>("favorite");
-  const [items, setItems] = useState<SavedItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const { tab } = useLocalSearchParams<{ tab?: string }>();
+  const initialTab: ListType =
+    tab === "want_to_go" || tab === "visited" ? tab : "favorite";
+  const [activeTab, setActiveTab] = useState<ListType>(initialTab);
+
+  // Saved list via React Query: cached per tab + offline-persisted, refetched
+  // on focus to catch saves made elsewhere. A failed refresh keeps stale items.
+  const savedQuery = useSavedRestaurants(activeTab);
+  const items = savedQuery.data ?? EMPTY_SAVED;
+  const loading =
+    savedQuery.isPending || (savedQuery.isFetching && !savedQuery.data);
+  const refreshing = savedQuery.isRefetching;
 
   // Filter state — resets on tab change
   const [searchQuery, setSearchQuery] = useState("");
@@ -138,78 +145,42 @@ export default function SavedScreen() {
   const [sortKey, setSortKey] = useState<SortKey>("newest_saved");
   const [sortPickerOpen, setSortPickerOpen] = useState(false);
   const [cityPickerOpen, setCityPickerOpen] = useState(false);
+  const { styles, colors } = useThemedStyles(makeStyles);
 
-  const load = useCallback(async (type: ListType, isRefresh = false) => {
-    if (!isRefresh) setLoading(true);
-    try {
-      const results = await listSavedRestaurants(type);
+  // Two-column grid: each card fills half the row minus the page padding and
+  // the inter-card gap.
+  const { width: windowWidth } = useWindowDimensions();
+  const cardWidth = (windowWidth - spacing.screen * 2 - spacing.md) / 2;
 
-      // Collect IDs of restaurants that loaded successfully, fetch live stats
-      const validRestaurants = results
-        .map((r) => r.restaurant)
-        .filter((r): r is Restaurant => r !== null);
-      const statsMap =
-        validRestaurants.length > 0
-          ? await getReviewStatsForRestaurants(
-              validRestaurants.map((r) => r.id),
-            )
-          : new Map();
+  const { refetch: refetchSaved } = savedQuery;
 
-      // Merge stats into restaurant objects
-      setItems(
-        results.map((r) => ({
-          savedId: r.saved.id,
-          savedAt: r.saved.createdAt,
-          restaurant: r.restaurant
-            ? (() => {
-                const stats = statsMap.get(r.restaurant.id);
-                return stats
-                  ? {
-                      ...r.restaurant,
-                      averageRating: stats.average,
-                      reviewCount: stats.count,
-                    }
-                  : r.restaurant;
-              })()
-            : null,
-        })),
-      );
-    } catch (err) {
-      console.warn("[saved] load failed:", err);
-      setItems([]);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
-
-  // Reload whenever the screen gains focus
+  // Refetch on focus to catch saves toggled on the detail screen. Deduped with
+  // the initial mount fetch by React Query.
   useFocusEffect(
     useCallback(() => {
-      load(activeTab);
-    }, [load, activeTab]),
+      refetchSaved();
+    }, [refetchSaved]),
   );
 
   const handleTabChange = useCallback(
     (type: ListType) => {
       if (type === activeTab) return;
-      setActiveTab(type);
-      setItems([]);
+      setActiveTab(type); // new query key → React Query loads (or serves cache)
       // Reset all filters when changing tabs
       setSearchQuery("");
       setSearchVisible(false);
       setActiveCategory("all");
       setCityFilter(null);
       setSortKey("newest_saved");
-      load(type);
     },
-    [activeTab, load],
+    [activeTab],
   );
 
   const handleRefresh = useCallback(() => {
-    setRefreshing(true);
-    load(activeTab, true);
-  }, [activeTab, load]);
+    refetchSaved();
+  }, [refetchSaved]);
+
+  const handleRetry = handleRefresh;
 
   const handleRowPress = useCallback(
     (restaurantId: string) => {
@@ -307,19 +278,39 @@ export default function SavedScreen() {
   const currentSortLabel =
     SORT_OPTIONS.find((o) => o.key === sortKey)?.label ?? "Sort";
   const isGenuinelyEmpty = items.length === 0;
+  // Show the error screen when we have nothing to fall back on. Stale
+  // items + a failed refresh keeps the stale items visible (loadError is
+  // only set when items were empty).
+  const showError = !loading && savedQuery.isError && items.length === 0;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       {/* Page header — centered title with search toggle on the right */}
       <View style={styles.pageHeader}>
         <View style={styles.headerTopRow}>
-          {/* Left spacer — balances the right icon so the title is truly centered */}
-          <View style={styles.headerSide} />
+          {/* Left: My Collections (balances the right search icon) */}
+          <View style={styles.headerSide}>
+            {listsEnabled() ? (
+              <Pressable
+                onPress={() => router.push("/list")}
+                style={styles.headerIconBtn}
+                hitSlop={6}
+                accessibilityRole="button"
+                accessibilityLabel="My collections"
+              >
+                <MaterialCommunityIcons
+                  name="bookmark-multiple-outline"
+                  size={22}
+                  color={colors.textPrimary}
+                />
+              </Pressable>
+            ) : null}
+          </View>
 
           <Text style={styles.pageTitle}>My Lists</Text>
 
           <View style={styles.headerSide}>
-            {!isGenuinelyEmpty ? (
+            {!isGenuinelyEmpty && !showError ? (
               <Pressable
                 onPress={handleSearchToggle}
                 style={[
@@ -381,8 +372,8 @@ export default function SavedScreen() {
         })}
       </View>
 
-      {/* Filters — only show when list isn't empty */}
-      {!loading && !isGenuinelyEmpty ? (
+      {/* Filters — only show when list isn't empty and we're not in error */}
+      {!loading && !isGenuinelyEmpty && !showError ? (
         <View style={styles.filtersWrap}>
           {/* Search bar (animated in/out) */}
           {searchVisible ? (
@@ -394,7 +385,7 @@ export default function SavedScreen() {
               <MaterialCommunityIcons
                 name="magnify"
                 size={20}
-                color={colors.textMuted}
+                color={colors.textSecondary}
                 style={{ marginRight: spacing.sm }}
               />
               <TextInput
@@ -418,70 +409,20 @@ export default function SavedScreen() {
             </Animated.View>
           ) : null}
 
-          {/* Category + city chips row */}
-          <FlatList
-            horizontal
-            data={CATEGORIES}
-            keyExtractor={(item) => item.id}
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.chipsContent}
-            ListFooterComponent={
+          {/* Category chips + a trailing City filter tile */}
+          <CategoryChips
+            activeId={activeCategory}
+            onSelect={setActiveCategory}
+            trailing={
               availableCities.length > 0 ? (
-                <Pressable
+                <TileChip
+                  icon="map-marker"
+                  label={cityFilter ?? "City"}
+                  active={!!cityFilter}
                   onPress={() => setCityPickerOpen(true)}
-                  style={[
-                    chipStyles.chip,
-                    cityFilter && chipStyles.cityChipActive,
-                  ]}
-                >
-                  <MaterialCommunityIcons
-                    name="map-marker"
-                    size={14}
-                    color={cityFilter ? colors.textInverse : colors.primary}
-                    style={{ marginRight: 5 }}
-                  />
-                  <Text
-                    style={[
-                      chipStyles.label,
-                      cityFilter && chipStyles.labelActive,
-                    ]}
-                  >
-                    {cityFilter ?? "City"}
-                  </Text>
-                  <MaterialCommunityIcons
-                    name="chevron-down"
-                    size={14}
-                    color={cityFilter ? colors.textInverse : colors.primary}
-                    style={{ marginLeft: 4 }}
-                  />
-                </Pressable>
+                />
               ) : null
             }
-            renderItem={({ item }) => {
-              const isActive = activeCategory === item.id;
-              return (
-                <Pressable
-                  onPress={() => setActiveCategory(item.id)}
-                  style={[chipStyles.chip, isActive && chipStyles.chipActive]}
-                >
-                  <MaterialCommunityIcons
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    name={item.icon as any}
-                    size={14}
-                    color={isActive ? colors.textInverse : colors.textMuted}
-                    style={{ marginRight: 5 }}
-                  />
-                  <Text
-                    style={[
-                      chipStyles.label,
-                      isActive && chipStyles.labelActive,
-                    ]}
-                  >
-                    {item.label}
-                  </Text>
-                </Pressable>
-              );
-            }}
           />
 
           {/* Count + sort row */}
@@ -512,11 +453,22 @@ export default function SavedScreen() {
           </View>
         </View>
       ) : null}
-
       {/* Content */}
-      {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={colors.primary} />
+      {showError ? (
+        <ErrorState
+          variant="screen"
+          icon="cloud-off-outline"
+          title="Couldn't load your saved spots"
+          body="Check your connection and try again."
+          onRetry={handleRetry}
+        />
+      ) : loading ? (
+        // Skeleton grid — small-card placeholders in the same 2-column layout
+        // (same horizontal padding + gap) so cards land where skeletons sat.
+        <View style={styles.skeletonGrid}>
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <RestaurantSmallCardSkeleton key={i} width={cardWidth} />
+          ))}
         </View>
       ) : isGenuinelyEmpty ? (
         <View style={styles.center}>
@@ -548,15 +500,15 @@ export default function SavedScreen() {
         <FlatList
           data={filteredItems}
           keyExtractor={(item) => item.savedId}
+          numColumns={2}
+          columnWrapperStyle={styles.columnWrapper}
           renderItem={({ item }) => (
-            <View style={styles.cardWrap}>
-              <RestaurantImageCard
-                restaurant={item.restaurant!}
-                onPress={handleRowPress}
-              />
-            </View>
+            <RestaurantSmallCard
+              restaurant={item.restaurant!}
+              onPress={handleRowPress}
+              width={cardWidth}
+            />
           )}
-          ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
@@ -730,8 +682,10 @@ export default function SavedScreen() {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
-  // Whole screen is white — matches Community
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
+  // Whole screen is one surface — matches Community
   safe: { flex: 1, backgroundColor: colors.cardBackground },
 
   // Header — same surface as the rest now
@@ -824,26 +778,25 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.divider,
   },
+  // Elevated white pill — matches the search bar on the home (index) page.
   searchBar: {
+    height: 52,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: colors.pageBackground,
-    borderRadius: radius.lg,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
+    backgroundColor: colors.cardBackground,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.lg,
     marginBottom: spacing.md,
     borderWidth: 1,
     borderColor: colors.divider,
+    ...shadows.sm,
   },
   searchInput: {
     flex: 1,
     fontFamily: fonts.regular,
     fontSize: T.size.base,
     color: colors.textPrimary,
-  },
-  chipsContent: {
-    gap: spacing.sm,
-    paddingBottom: spacing.sm,
+    padding: 0,
   },
   sortRow: {
     flexDirection: "row",
@@ -876,10 +829,21 @@ const styles = StyleSheet.create({
   listContent: {
     paddingTop: spacing.md,
     paddingBottom: 100,
-    paddingHorizontal: 0,
   },
-  cardWrap: {
+  // One grid row: page padding on the sides, a gap between the two cards, and
+  // bottom spacing before the next row.
+  columnWrapper: {
     paddingHorizontal: spacing.screen,
+    gap: spacing.md,
+    marginBottom: spacing.lg,
+  },
+  // Mirrors the real grid's padding + gap so skeletons land where cards will.
+  skeletonGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    paddingTop: spacing.md,
+    paddingHorizontal: spacing.screen,
+    gap: spacing.md,
   },
 
   center: {
@@ -962,36 +926,5 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
     color: colors.primary,
   },
-});
-
-const chipStyles = StyleSheet.create({
-  chip: {
-    flexDirection: "row",
-    alignItems: "center",
-    height: size.chipHeight,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.full,
-    backgroundColor: colors.pageBackground,
-    borderWidth: 1,
-    borderColor: colors.divider,
-  },
-  chipActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-    ...shadows.sm,
-  },
-  cityChipActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-    ...shadows.sm,
-  },
-  label: {
-    fontFamily: fonts.medium,
-    fontSize: T.size.sm,
-    color: colors.textMuted,
-  },
-  labelActive: {
-    fontFamily: fonts.bold,
-    color: colors.textInverse,
-  },
-});
+  });
+}

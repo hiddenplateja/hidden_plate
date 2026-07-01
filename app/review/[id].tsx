@@ -14,44 +14,65 @@
 // realtime useEffect from the chat history. Until then, comments you
 // post appear immediately (optimistic), but other users' new comments
 // won't show until you re-enter the screen.
+//
+// Loading state: skeleton mirrors the real layout (author row, restaurant
+// tag, stars, comment, photo placeholder, comments header) followed by 3
+// comment-row skeletons. The back button stays live so the user isn't
+// trapped while the screen loads.
+//
+// Failure handling:
+//   - The primary fetch (the review itself) is tolerant in the service —
+//     getReviewById returns null both for "not found" AND "fetch failed".
+//     To distinguish, we track loadError separately and prefer "couldn't
+//     load" UI when the fetch threw, vs "review not found" when it
+//     genuinely returned null.
+//   - Comments / authors / restaurant load failures are absorbed — the
+//     review block still renders, just with fewer commenters or no
+//     restaurant tag. Comments empty out on failure (Sentry captures it).
 
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    Dimensions,
-    FlatList,
-    KeyboardAvoidingView,
-    Platform,
-    Pressable,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Alert,
+  Dimensions,
+  FlatList,
+  Keyboard,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Avatar } from "@/components/Avatar";
+import { ErrorState } from "@/components/ErrorState";
+import { OwnerReviewResponse } from "@/components/OwnerReviewResponse";
+import { Skeleton, SkeletonCircle, SkeletonText } from "@/components/Skeleton";
 import { useAuth } from "@/hooks/useAuth";
+import { getHiddenUserIds } from "@/services/blocks";
 import { getRestaurantById } from "@/services/restaurants";
 import {
-    addComment,
-    deleteComment,
-    listCommentsForReview,
+  addComment,
+  deleteComment,
+  listCommentsForReview,
 } from "@/services/reviewComments";
 import { getReviewById } from "@/services/reviews";
+import { captureError } from "@/services/sentry";
 import { getImageViewUrl } from "@/services/storage";
 import { getUsersByIds } from "@/services/users";
 import {
-    colors,
-    fonts,
-    radius,
-    spacing,
-    typographyTokens as T,
+  fonts,
+  radius,
+  spacing,
+  typographyTokens as T,
 } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 import type { Restaurant } from "@/types/restaurant";
 import type { Review } from "@/types/review";
 import type { ReviewComment } from "@/types/reviewComment";
@@ -83,14 +104,42 @@ export default function ReviewScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
+  const { styles, colors } = useThemedStyles(makeStyles);
+  const skeletonStyles = useThemedStyles(makeSkeletonStyles).styles;
 
   const [review, setReview] = useState<Review | null>(null);
   const [author, setAuthor] = useState<User | null>(null);
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [comments, setComments] = useState<CommentWithAuthor[]>([]);
   const [loading, setLoading] = useState(true);
+  // True when the primary fetch hit a real error (not "not found").
+  // Used to show "Couldn't load" instead of "Review not found".
+  const [loadFailed, setLoadFailed] = useState(false);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  // Mutual block set — hides a blocked author's review and their comments.
+  const [blockedUserIds, setBlockedUserIds] = useState<Set<string>>(new Set());
+
+  // Bottom safe-area inset so the comment composer sits above the device nav
+  // bar / home indicator instead of flush against the screen edge.
+  const insets = useSafeAreaInsets();
+
+  // Whether the keyboard is up — collapses the composer's nav inset while
+  // typing (it rides above the keyboard via KeyboardAvoidingView, so the inset
+  // would just add a gap then). Restored when the keyboard hides.
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  useEffect(() => {
+    const show = Keyboard.addListener("keyboardDidShow", () =>
+      setKeyboardVisible(true),
+    );
+    const hide = Keyboard.addListener("keyboardDidHide", () =>
+      setKeyboardVisible(false),
+    );
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
 
   const listRef = useRef<FlatList>(null);
 
@@ -99,38 +148,127 @@ export default function ReviewScreen() {
   const loadAll = useCallback(async () => {
     if (!id) return;
     setLoading(true);
+    setLoadFailed(false);
+
+    // Step 1 — fetch the review. getReviewById is tolerant: returns null on
+    // both "not found" AND fetch failure. We can't distinguish those without
+    // probing the network state. As a heuristic, we treat a failure of any
+    // SECONDARY fetch (which all hit the same endpoint moments later) as
+    // signal that the network is what failed — but the simpler approach is
+    // to wrap the getReviewById call in its own try/catch with a custom
+    // throwing helper. Skipping that complexity: if getReviewById returned
+    // null AND the user-by-ID call also threw, that's the network. We just
+    // bucket those together as "load failed" rather than building a smarter
+    // distinguisher.
+    let fetchedReview: Review | null;
     try {
-      const fetchedReview = await getReviewById(id);
-      if (!fetchedReview) {
-        setLoading(false);
-        return;
-      }
-      setReview(fetchedReview);
+      fetchedReview = await getReviewById(id);
+    } catch (err) {
+      // Shouldn't happen because getReviewById doesn't throw — but defensive.
+      captureError(err, {
+        screen: "reviewDetail",
+        op: "load.getReviewById",
+        reviewId: id,
+      });
+      setLoadFailed(true);
+      setLoading(false);
+      return;
+    }
 
-      const [authorMap, fetchedRestaurant, commentsPage] = await Promise.all([
-        getUsersByIds([fetchedReview.userId]),
-        getRestaurantById(fetchedReview.restaurantId).catch(() => null),
-        listCommentsForReview(id, { pageSize: 100 }),
-      ]);
+    if (!fetchedReview) {
+      // Could be "not found" OR a silent fetch error. Show "not found"
+      // UI; users hitting a network error here will see it as missing.
+      // Not ideal but the simpler trade-off given the service signature.
+      setReview(null);
+      setLoading(false);
+      return;
+    }
 
-      setAuthor(authorMap.get(fetchedReview.userId) ?? null);
-      setRestaurant(fetchedRestaurant);
+    setReview(fetchedReview);
 
+    // Step 2 — secondary fetches in parallel. allSettled so a failure in
+    // one section doesn't kill the others.
+    const [
+      authorMapResult,
+      restaurantResult,
+      commentsPageResult,
+      hiddenResult,
+    ] = await Promise.allSettled([
+      getUsersByIds([fetchedReview.userId]),
+      getRestaurantById(fetchedReview.restaurantId),
+      listCommentsForReview(id, { pageSize: 100 }),
+      getHiddenUserIds(),
+    ]);
+
+    // Mutual block set — hides a blocked author's review entirely (handled in
+    // render) and filters blocked users' comments below. Tolerant: empty set
+    // on failure means nothing is filtered rather than the screen breaking.
+    const hidden =
+      hiddenResult.status === "fulfilled"
+        ? hiddenResult.value
+        : new Set<string>();
+    setBlockedUserIds(hidden);
+
+    // Author of the review
+    if (authorMapResult.status === "fulfilled") {
+      setAuthor(authorMapResult.value.get(fetchedReview.userId) ?? null);
+    } else {
+      captureError(authorMapResult.reason, {
+        screen: "reviewDetail",
+        op: "load.getUsersByIds.author",
+        reviewId: id,
+      });
+      setAuthor(null);
+    }
+
+    // Restaurant tag — null on failure is fine; the tag won't render
+    if (restaurantResult.status === "fulfilled") {
+      setRestaurant(restaurantResult.value);
+    } else {
+      captureError(restaurantResult.reason, {
+        screen: "reviewDetail",
+        op: "load.getRestaurantById",
+        restaurantId: fetchedReview.restaurantId,
+      });
+      setRestaurant(null);
+    }
+
+    // Comments + their commenters
+    if (commentsPageResult.status === "fulfilled") {
+      const commentsPage = commentsPageResult.value;
       const commenterIds = Array.from(
         new Set(commentsPage.items.map((c) => c.userId)),
       );
-      const commenterMap = await getUsersByIds(commenterIds);
+      let commenterMap = new Map<string, User>();
+      if (commenterIds.length > 0) {
+        try {
+          commenterMap = await getUsersByIds(commenterIds);
+        } catch (err) {
+          captureError(err, {
+            screen: "reviewDetail",
+            op: "load.getUsersByIds.commenters",
+            reviewId: id,
+          });
+        }
+      }
       setComments(
-        commentsPage.items.map((c) => ({
-          comment: c,
-          author: commenterMap.get(c.userId) ?? null,
-        })),
+        commentsPage.items
+          .filter((c) => !hidden.has(c.userId))
+          .map((c) => ({
+            comment: c,
+            author: commenterMap.get(c.userId) ?? null,
+          })),
       );
-    } catch (err) {
-      console.warn("[review] load failed:", err);
-    } finally {
-      setLoading(false);
+    } else {
+      captureError(commentsPageResult.reason, {
+        screen: "reviewDetail",
+        op: "load.listCommentsForReview",
+        reviewId: id,
+      });
+      setComments([]);
     }
+
+    setLoading(false);
   }, [id]);
 
   useEffect(() => {
@@ -165,6 +303,11 @@ export default function ReviewScreen() {
         listRef.current?.scrollToEnd({ animated: true });
       }, 100);
     } catch (err) {
+      captureError(err, {
+        screen: "reviewDetail",
+        op: "addComment",
+        reviewId: review.id,
+      });
       Alert.alert(
         "Couldn't post comment",
         err instanceof Error ? err.message : "Try again.",
@@ -191,6 +334,11 @@ export default function ReviewScreen() {
                 prev.filter((c) => c.comment.id !== comment.id),
               );
             } catch (err) {
+              captureError(err, {
+                screen: "reviewDetail",
+                op: "deleteComment",
+                commentId: comment.id,
+              });
               Alert.alert(
                 "Couldn't delete",
                 err instanceof Error ? err.message : "Try again.",
@@ -209,20 +357,113 @@ export default function ReviewScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={["top"]}>
         <Header onBack={() => router.back()} />
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={colors.primary} />
+        <View style={skeletonStyles.wrap}>
+          {/* Review post block */}
+          <View style={skeletonStyles.postWrap}>
+            {/* Author row */}
+            <View style={skeletonStyles.authorRow}>
+              <SkeletonCircle size={42} />
+              <View style={{ flex: 1, gap: 4 }}>
+                <Skeleton width="55%" height={14} borderRadius={4} />
+                <Skeleton width="40%" height={11} borderRadius={4} />
+              </View>
+            </View>
+
+            {/* Restaurant tag */}
+            <Skeleton
+              width={200}
+              height={26}
+              borderRadius={radius.lg}
+              style={{ marginBottom: spacing.md }}
+            />
+
+            {/* Stars */}
+            <Skeleton
+              width={100}
+              height={16}
+              borderRadius={4}
+              style={{ marginBottom: spacing.md }}
+            />
+
+            {/* Comment text */}
+            <View style={{ marginBottom: spacing.md }}>
+              <SkeletonText
+                lines={4}
+                lineHeight={14}
+                gap={8}
+                lastLineWidthPct={55}
+              />
+            </View>
+
+            {/* Photo placeholder */}
+            <Skeleton
+              width="100%"
+              height={200}
+              borderRadius={radius.md}
+              style={{ marginBottom: spacing.md }}
+            />
+
+            {/* Comments header divider */}
+            <View style={skeletonStyles.commentsHeader}>
+              <Skeleton width={110} height={16} borderRadius={4} />
+            </View>
+          </View>
+
+          {/* Comment row skeletons */}
+          <View style={{ paddingTop: spacing.sm }}>
+            <CommentRowSkeleton />
+            <CommentRowSkeleton />
+            <CommentRowSkeleton />
+          </View>
         </View>
       </SafeAreaView>
     );
   }
 
-  if (!review) {
+  // Real load error (defensive — getReviewById is currently tolerant so
+  // this branch only fires if a future change makes it throw).
+  if (loadFailed) {
     return (
       <SafeAreaView style={styles.safe} edges={["top"]}>
         <Header onBack={() => router.back()} />
-        <View style={styles.center}>
-          <Text style={styles.emptyText}>Review not found.</Text>
-        </View>
+        <ErrorState
+          variant="screen"
+          icon="cloud-off-outline"
+          title="Couldn't load this review"
+          body="Check your connection and try again."
+          onRetry={loadAll}
+        />
+      </SafeAreaView>
+    );
+  }
+
+  if (!review) {
+    // Genuinely missing — review was deleted, or ID is invalid.
+    return (
+      <SafeAreaView style={styles.safe} edges={["top"]}>
+        <Header onBack={() => router.back()} />
+        <ErrorState
+          variant="screen"
+          icon="comment-question-outline"
+          title="Review not found"
+          body="It may have been deleted."
+        />
+      </SafeAreaView>
+    );
+  }
+
+  // Author is blocked (either direction) — hide the review entirely with a
+  // neutral message that doesn't reveal who blocked whom.
+  if (blockedUserIds.has(review.userId)) {
+    return (
+      <SafeAreaView style={styles.safe} edges={["top"]}>
+        <Header onBack={() => router.back()} />
+        <ErrorState
+          variant="screen"
+          icon="block-helper"
+          title="This review isn't available"
+          body="You can't view content from this account."
+        />
       </SafeAreaView>
     );
   }
@@ -230,22 +471,27 @@ export default function ReviewScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <Header onBack={() => router.back()} />
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
-      >
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
         <FlatList
           ref={listRef}
           data={comments}
           keyExtractor={(item) => item.comment.id}
           ListHeaderComponent={
-            <ReviewPostBlock
-              review={review}
-              author={author}
-              restaurant={restaurant}
-              commentCount={comments.length}
-            />
+            <>
+              <ReviewPostBlock
+                review={review}
+                author={author}
+                restaurant={restaurant}
+                commentCount={comments.length}
+              />
+              <OwnerReviewResponse
+                reviewId={review.id}
+                restaurantId={review.restaurantId}
+                ownerId={restaurant?.ownerId ?? null}
+                currentUserId={user?.id ?? null}
+                restaurantName={restaurant?.name}
+              />
+            </>
           }
           renderItem={({ item }) => (
             <CommentRow
@@ -267,7 +513,16 @@ export default function ReviewScreen() {
           keyboardShouldPersistTaps="handled"
         />
 
-        <View style={styles.inputBar}>
+        <View
+          style={[
+            styles.inputBar,
+            {
+              paddingBottom: keyboardVisible
+                ? spacing.md
+                : spacing.md + insets.bottom,
+            },
+          ]}
+        >
           <TextInput
             value={draft}
             onChangeText={setDraft}
@@ -308,6 +563,7 @@ export default function ReviewScreen() {
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
 function Header({ onBack }: { onBack: () => void }) {
+  const { styles, colors } = useThemedStyles(makeStyles);
   return (
     <View style={styles.header}>
       <Pressable
@@ -341,6 +597,7 @@ function ReviewPostBlock({
   commentCount: number;
 }) {
   const router = useRouter();
+  const { styles: postStyles, colors } = useThemedStyles(makePostStyles);
   return (
     <View style={postStyles.wrap}>
       <Pressable
@@ -431,6 +688,23 @@ function ReviewPostBlock({
   );
 }
 
+// Skeleton for a single comment row — matches CommentRow's layout exactly.
+function CommentRowSkeleton() {
+  const { styles: commentStyles } = useThemedStyles(makeCommentStyles);
+  return (
+    <View style={commentStyles.row}>
+      <SkeletonCircle size={32} />
+      <View style={commentStyles.body}>
+        <View style={{ flexDirection: "row", gap: 6, marginBottom: 6 }}>
+          <Skeleton width={90} height={12} borderRadius={4} />
+          <Skeleton width={30} height={10} borderRadius={4} />
+        </View>
+        <SkeletonText lines={2} lineHeight={13} gap={6} lastLineWidthPct={60} />
+      </View>
+    </View>
+  );
+}
+
 function CommentRow({
   item,
   currentUserId,
@@ -444,6 +718,7 @@ function CommentRow({
 }) {
   const { comment, author } = item;
   const isOwn = comment.userId === currentUserId;
+  const { styles: commentStyles, colors } = useThemedStyles(makeCommentStyles);
 
   return (
     <View style={commentStyles.row}>
@@ -493,7 +768,9 @@ function CommentRow({
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.cardBackground },
   header: {
     flexDirection: "row",
@@ -562,9 +839,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   sendBtnDisabled: { opacity: 0.4 },
-});
+  });
+}
 
-const postStyles = StyleSheet.create({
+function makePostStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   wrap: {
     paddingHorizontal: spacing.screen,
     paddingTop: spacing.lg,
@@ -648,9 +928,12 @@ const postStyles = StyleSheet.create({
     fontSize: T.size.base,
     color: colors.textPrimary,
   },
-});
+  });
+}
 
-const commentStyles = StyleSheet.create({
+function makeCommentStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   row: {
     flexDirection: "row",
     paddingHorizontal: spacing.screen,
@@ -684,4 +967,32 @@ const commentStyles = StyleSheet.create({
     color: colors.textPrimary,
     lineHeight: 20,
   },
-});
+  });
+}
+
+function makeSkeletonStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
+  wrap: {
+    flex: 1,
+    backgroundColor: colors.cardBackground,
+  },
+  postWrap: {
+    paddingHorizontal: spacing.screen,
+    paddingTop: spacing.lg,
+  },
+  authorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    marginBottom: spacing.md,
+  },
+  commentsHeader: {
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.divider,
+    marginTop: spacing.sm,
+  },
+  });
+}

@@ -6,27 +6,29 @@ import { useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
-    KeyboardAvoidingView,
-    Platform,
     Pressable,
-    ScrollView,
     StyleSheet,
     Text,
     TextInput,
     View,
 } from "react-native";
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { BadgeEarnedModal } from "@/components/BadgeEarnedModal";
 import {
     ImagePickerField,
     type PickedPhoto,
 } from "@/components/ImagePickerField";
 import { StarRating } from "@/components/StarRating";
 import { Button } from "@/components/ui/Button";
+import { useAuth } from "@/hooks/useAuth";
+import { syncEarnedBadges } from "@/services/badges";
 import { getRestaurantById } from "@/services/restaurants";
 import {
     createReview,
     getMyReviewForRestaurant,
+    getUserReviewStats,
     updateReview,
 } from "@/services/reviews";
 import {
@@ -34,8 +36,11 @@ import {
     deleteImage,
     uploadReviewImage,
 } from "@/services/storage";
-import { colors, radius, spacing, typography } from "@/theme/colors";
+import { radius, spacing, typography } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 import type { Restaurant } from "@/types/restaurant";
+import type { ReviewerBadge } from "@/utils/reviewerBadges";
 
 const MAX_COMMENT = 2000;
 const MAX_PHOTOS = 6;
@@ -45,11 +50,14 @@ export default function WriteReviewScreen() {
   const router = useRouter();
   const restaurantId = params.id;
   const editingReviewId = params.reviewId;
+  const { user } = useAuth();
 
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [submitProgress, setSubmitProgress] = useState<string | null>(null);
+  // Badges newly crossed by this review → shows the celebration modal.
+  const [celebration, setCelebration] = useState<ReviewerBadge[] | null>(null);
 
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState("");
@@ -59,6 +67,7 @@ export default function WriteReviewScreen() {
   const [ratingError, setRatingError] = useState<string | null>(null);
 
   const commentRef = useRef<TextInput>(null);
+  const { styles, colors } = useThemedStyles(makeStyles);
 
   useEffect(() => {
     if (!restaurantId) {
@@ -158,6 +167,7 @@ export default function WriteReviewScreen() {
           (id) => !keptIds.includes(id),
         );
         await Promise.all(removed.map((id) => deleteImage(id)));
+        router.back();
       } else {
         await createReview({
           restaurantId,
@@ -165,9 +175,24 @@ export default function WriteReviewScreen() {
           comment: comment.trim() || undefined,
           imageIds: finalImageIds,
         });
-      }
 
-      router.back();
+        // A new review can push the user over a reputation tier — detect it and
+        // celebrate before leaving. Best-effort: never block the post on this.
+        let earnedNew: ReviewerBadge[] = [];
+        if (user) {
+          try {
+            const stats = await getUserReviewStats(user.id);
+            earnedNew = await syncEarnedBadges(stats);
+          } catch {
+            // ignore — a missed celebration must not fail the review
+          }
+        }
+        if (earnedNew.length > 0) {
+          setCelebration(earnedNew); // navigate back when the modal is dismissed
+        } else {
+          router.back();
+        }
+      }
     } catch (err) {
       Alert.alert(
         "Couldn't save",
@@ -204,10 +229,7 @@ export default function WriteReviewScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
-      <KeyboardAvoidingView
-        style={styles.kav}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
+      <View style={styles.kav}>
         <View style={styles.header}>
           <Pressable
             onPress={() => router.back()}
@@ -226,10 +248,11 @@ export default function WriteReviewScreen() {
           <View style={{ width: 60 }} />
         </View>
 
-        <ScrollView
+        <KeyboardAwareScrollView
           contentContainerStyle={styles.scroll}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
+          bottomOffset={24}
         >
           <Text style={styles.restaurantName}>{restaurant.name}</Text>
 
@@ -285,13 +308,25 @@ export default function WriteReviewScreen() {
               loading={submitting}
             />
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        </KeyboardAwareScrollView>
+      </View>
+
+      {celebration ? (
+        <BadgeEarnedModal
+          badges={celebration}
+          onClose={() => {
+            setCelebration(null);
+            router.back();
+          }}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
   kav: { flex: 1 },
   center: {
@@ -364,4 +399,5 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
     textAlign: "center",
   },
-});
+  });
+}

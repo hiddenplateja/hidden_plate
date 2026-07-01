@@ -11,12 +11,15 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { ProfileView } from "@/components/ProfileView";
 import { useAuth } from "@/hooks/useAuth";
-import { colors, fonts, spacing, typographyTokens as T } from "@/theme/colors";
+import { fonts, spacing, typographyTokens as T } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 
 export default function UserProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { user } = useAuth();
+  const { styles, colors } = useThemedStyles(makeStyles);
 
   if (!id) {
     return (
@@ -58,7 +61,9 @@ export default function UserProfileScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.pageBackground },
   header: {
     flexDirection: "row",
@@ -92,4 +97,5 @@ const styles = StyleSheet.create({
     fontSize: T.size.base,
     color: colors.textSecondary,
   },
-});
+  });
+}

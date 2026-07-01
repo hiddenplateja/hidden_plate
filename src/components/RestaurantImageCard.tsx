@@ -8,6 +8,11 @@
 // Stacked info: name → rating (or "New listing") → cuisine line → location.
 // Cuisine line: "<first cuisine> • <up to 2 categories>" (e.g. "Jamaican • Jerk • BBQ")
 // Location: prefers city, falls back to parish.
+//
+// Also exports `RestaurantImageCardSkeleton` — a placeholder shape that
+// matches the card's 200px height + rounded corners. Just one large
+// skeleton block, since the real card's info is overlaid on the image
+// (no separate info section to mimic).
 
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
@@ -15,25 +20,25 @@ import { LinearGradient } from "expo-linear-gradient";
 import { memo, useCallback } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, {
-    useAnimatedStyle,
-    useSharedValue,
-    withSpring,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
 } from "react-native-reanimated";
 
+import { RestaurantImagePlaceholder } from "@/components/RestaurantImagePlaceholder";
+import { Skeleton } from "@/components/Skeleton";
 import { getImagePreviewUrl } from "@/services/storage";
 import {
-    colors,
-    fonts,
-    radius,
-    shadows,
-    spacing,
-    typographyTokens as T,
+  fonts,
+  radius,
+  shadows,
+  spacing,
+  typographyTokens as T,
 } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 import type { Restaurant } from "@/types/restaurant";
 import { getCuisineLine, getLocationLine } from "@/utils/restaurantDisplay";
-
-const STAR_COLOR =
-  (colors as unknown as Record<string, string>).star ?? "#F4A523";
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -54,6 +59,8 @@ export const RestaurantImageCard = memo(function RestaurantImageCard({
   onPress,
   height = 200,
 }: RestaurantImageCardProps) {
+  const { styles, colors } = useThemedStyles(makeStyles);
+  const STAR_COLOR = colors.star;
   const scale = useSharedValue(1);
   const animStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
@@ -82,23 +89,20 @@ export const RestaurantImageCard = memo(function RestaurantImageCard({
       accessibilityRole="button"
       accessibilityLabel={`View ${restaurant.name}`}
     >
+      {/* Monogram tile sits BEHIND the image so a lazy-loading or missing photo
+          shows a per-restaurant initial — never a bare grey rectangle while you
+          scroll. The (full-res) image fades in over it once decoded. */}
+      <RestaurantImagePlaceholder name={restaurant.name} />
       {url ? (
         <Image
           source={{ uri: url }}
           style={StyleSheet.absoluteFill}
           contentFit="cover"
-          transition={250}
+          transition={200}
           cachePolicy="memory-disk"
+          recyclingKey={restaurant.id}
         />
-      ) : (
-        <View style={[StyleSheet.absoluteFill, styles.placeholder]}>
-          <MaterialCommunityIcons
-            name="silverware-fork-knife"
-            size={40}
-            color={colors.border}
-          />
-        </View>
-      )}
+      ) : null}
 
       <LinearGradient
         colors={["rgba(0,0,0,0)", "rgba(0,0,0,0.78)"]}
@@ -138,17 +142,30 @@ export const RestaurantImageCard = memo(function RestaurantImageCard({
   );
 });
 
-const styles = StyleSheet.create({
+// ─── Skeleton sibling ───────────────────────────────────────────────────────
+// Single full-card-sized block. Matches the real card's height + radius
+// so the swap is seamless.
+
+interface RestaurantImageCardSkeletonProps {
+  height?: number;
+}
+
+export const RestaurantImageCardSkeleton = memo(
+  function RestaurantImageCardSkeleton({
+    height = 200,
+  }: RestaurantImageCardSkeletonProps) {
+    return <Skeleton width="100%" height={height} borderRadius={radius.xl} />;
+  },
+);
+
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   card: {
     borderRadius: radius.xl,
     overflow: "hidden",
     backgroundColor: colors.pageBackground,
     ...shadows.md,
-  },
-  placeholder: {
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.pageBackground,
   },
   gradient: {
     position: "absolute",
@@ -205,4 +222,5 @@ const styles = StyleSheet.create({
     fontSize: T.size.xs,
     color: "rgba(255,255,255,0.72)",
   },
-});
+  });
+}

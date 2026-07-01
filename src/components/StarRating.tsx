@@ -8,7 +8,7 @@
 
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { colors } from "@/theme/colors";
+import { useTheme } from "@/theme/ThemeProvider";
 
 interface StarRatingProps {
   value: number; // 0-5, supports decimals (4.5)
@@ -25,8 +25,10 @@ export function StarRating({
   onChange,
   size = 18,
   color = "#F59E0B",
-  emptyColor = colors.border,
+  emptyColor,
 }: StarRatingProps) {
+  const { colors } = useTheme();
+  const empty = emptyColor ?? colors.border;
   const interactive = !!onChange;
 
   if (interactive) {
@@ -50,7 +52,7 @@ export function StarRating({
               <Text
                 style={{
                   fontSize: size,
-                  color: filled ? color : emptyColor,
+                  color: filled ? color : empty,
                   marginRight: 4,
                 }}
               >
@@ -74,7 +76,7 @@ export function StarRating({
           key={i}
           style={{
             fontSize: size,
-            color: i < filled ? color : emptyColor,
+            color: i < filled ? color : empty,
             marginRight: 2,
           }}
         >

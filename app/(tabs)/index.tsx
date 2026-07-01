@@ -1,7 +1,8 @@
 // app/(tabs)/index.tsx
 // Home feed — Hidden Plate JA discovery screen.
 //
-// Design: gray page background, white card sections separated by gray gaps.
+// Design: full white page (consistent with Community / Saved / Profile).
+// Sections separated by hairline dividers, not gray gaps.
 // Sections: Featured · Near You · New Restaurants · All Spots feed.
 //
 // Architecture notes:
@@ -12,8 +13,21 @@
 //   - Notification bell shows unread count via NotificationBell component;
 //     taps navigate to /notifications.
 //   - "See all" links: Featured → /restaurants/featured · New → /restaurants/new
+//     · All Spots → /restaurants/all
+//   - All Spots shows the first 20 only as a preview. The full browsable list
+//     (10-per-page pagination, RestaurantImageCard) lives on /restaurants/all.
 //   - Cuisine + location line formats from utils/restaurantDisplay —
 //     consistent across all cards.
+//
+// Loading state uses skeletons that match the post-load layout, so the
+// transition has zero layout shift. The "Near You" location-fetch step also
+// shows skeleton cards while coordinates are being acquired.
+//
+// Failure handling:
+//   - Primary fetch failing with nothing to fall back on → full-screen
+//     ErrorState with retry (replaces the old intrusive Alert popup).
+//   - Refresh failures when items are already on screen → silent (Sentry
+//     captures); the stale list stays visible, user can pull down again.
 
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
@@ -23,8 +37,6 @@ import { useRouter } from "expo-router";
 
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
   Dimensions,
   FlatList,
   Pressable,
@@ -43,15 +55,33 @@ import Animated, {
 } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { NotificationBell } from "@/components/NotificationBell";
-import { RestaurantSmallCard } from "@/components/RestaurantSmallCard";
-import { RestaurantWideCard } from "@/components/RestaurantWideCard";
-import { useAuth } from "@/hooks/useAuth";
-import { listRestaurants } from "@/services/restaurants";
-import { getReviewStatsForRestaurants } from "@/services/reviews";
-import { getImagePreviewUrl } from "@/services/storage";
+import { CategoryChips, CATEGORIES } from "@/components/CategoryChips";
+import { ErrorState } from "@/components/ErrorState";
 import {
-  colors,
+  applyHomeFilters,
+  countActiveFilters,
+  DEFAULT_FILTERS,
+  HomeFilterSheet,
+  type HomeFilters,
+} from "@/components/HomeFilterSheet";
+import { NotificationBell } from "@/components/NotificationBell";
+import {
+  RestaurantSmallCard,
+  RestaurantSmallCardSkeleton,
+} from "@/components/RestaurantSmallCard";
+import { RestaurantWideCard } from "@/components/RestaurantWideCard";
+import { Skeleton } from "@/components/Skeleton";
+import { SpotOfTheDayHero } from "@/components/SpotOfTheDayHero";
+import { useAuth } from "@/hooks/useAuth";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { useHomeFeed, useRestaurantSearch } from "@/hooks/useHomeFeed";
+import {
+  resolveSpotOfTheDay,
+  type SpotOfTheDay,
+} from "@/services/spotOfTheDay";
+import { getImagePreviewUrl } from "@/services/storage";
+import { getTastePreferences } from "@/services/userPreferences";
+import {
   fonts,
   radius,
   shadows,
@@ -59,46 +89,31 @@ import {
   spacing,
   typographyTokens as T,
 } from "@/theme/colors";
-import type { Restaurant } from "@/types/restaurant";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
+import type { Parish, Restaurant } from "@/types/restaurant";
+import { ALL_SPOTS_SEED, rankAllSpots } from "@/utils/allSpotsRanking";
+import { getDistanceKm } from "@/utils/distance";
 import { getCuisineLine, getLocationLine } from "@/utils/restaurantDisplay";
 
 const { width: SW } = Dimensions.get("window");
 
-const STAR_COLOR =
-  (colors as unknown as Record<string, string>).star ?? "#F4A523";
-
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const CATEGORIES = [
-  { id: "all", label: "All", icon: "silverware-fork-knife" },
-  { id: "jerk", label: "Jerk", icon: "fire" },
-  { id: "seafood", label: "Seafood", icon: "fish" },
-  { id: "patties", label: "Patties", icon: "pie" },
-  { id: "ital", label: "Ital", icon: "leaf" },
-  { id: "sweets", label: "Sweets", icon: "cupcake" },
-] as const;
+// How many All Spots cards to show on Home before sending users to the
+// dedicated /restaurants/all page. The full list paginates 10 at a time there.
+const ALL_SPOTS_PREVIEW = 20;
 
-const PAGE_SIZE = 5;
-const LOAD_MORE_SIZE = 100;
+// "Hidden Gems" — highly rated but still under the radar (only a handful of
+// reviews). On brand for Hidden Plate, and distinct from Featured (paid) and
+// New. Derived from the already-loaded feed, so it's free. Tunable thresholds;
+// the row hides itself when nothing qualifies (e.g. before any reviews exist).
+const GEM_MIN_RATING = 4.3;
+const GEM_MIN_REVIEWS = 1;
+const GEM_MAX_REVIEWS = 5;
+const HIDDEN_GEMS_MAX = 10;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function getDistanceKm(
-  lat1: number,
-  lon1: number,
-  lat2: number,
-  lon2: number,
-): number {
-  const R = 6371;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLon = ((lon2 - lon1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
 
 function coverUrl(restaurant: Restaurant): string | null {
   const id = restaurant.coverImageId ?? restaurant.imageIds[0] ?? null;
@@ -149,6 +164,7 @@ const FeaturedCard = memo(function FeaturedCard({
   item: Restaurant;
   onPress: (id: string) => void;
 }) {
+  const { styles: featuredStyles, colors } = useThemedStyles(makeFeaturedStyles);
   const handlePress = useCallback(() => onPress(item.id), [item.id, onPress]);
   const url = coverUrl(item);
   const cuisine = primaryCuisine(item); // for the cuisine badge in the top-left
@@ -198,7 +214,7 @@ const FeaturedCard = memo(function FeaturedCard({
             <MaterialCommunityIcons
               name="star"
               size={13}
-              color={colors.cardBackground}
+              color={colors.star}
             />
             <Text style={featuredStyles.ratingValue}>
               {item.averageRating.toFixed(1)}
@@ -227,39 +243,10 @@ const FeaturedCard = memo(function FeaturedCard({
   );
 });
 
-// ─── Category chip ───────────────────────────────────────────────────────────
-
-function CategoryChip({
-  item,
-  isActive,
-  onPress,
-}: {
-  item: (typeof CATEGORIES)[number];
-  isActive: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={[chipStyles.chip, isActive && chipStyles.chipActive]}
-    >
-      <MaterialCommunityIcons
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        name={item.icon as any}
-        size={14}
-        color={isActive ? colors.textInverse : colors.textMuted}
-        style={{ marginRight: 5 }}
-      />
-      <Text style={[chipStyles.label, isActive && chipStyles.labelActive]}>
-        {item.label}
-      </Text>
-    </Pressable>
-  );
-}
-
 // ─── "See all" button (right side of a section header) ──────────────────────
 
 function SeeAllButton({ onPress }: { onPress: () => void }) {
+  const { styles: screenStyles, colors } = useThemedStyles(makeScreenStyles);
   return (
     <Pressable
       onPress={onPress}
@@ -278,6 +265,110 @@ function SeeAllButton({ onPress }: { onPress: () => void }) {
   );
 }
 
+// ─── Featured card skeleton — matches FeaturedCard's dimensions ─────────────
+// Uses size.featuredCardWidth + size.featuredCardHeight so the skeleton row
+// scrolls/snaps identically to the real one.
+
+function FeaturedCardSkeleton() {
+  return (
+    <Skeleton
+      width={size.featuredCardWidth}
+      height={size.featuredCardHeight}
+      borderRadius={radius.xl}
+    />
+  );
+}
+
+// ─── Full-screen home skeleton — mirrors the post-load layout ───────────────
+// Why a full custom skeleton rather than a simple spinner: this is the
+// app's entry screen and the first impression. A real-layout skeleton
+// makes the load feel substantially faster and prevents the layout shift
+// that happens when the spinner is replaced by 600px of structured content.
+
+function HomeSkeleton() {
+  const { styles: screenStyles } = useThemedStyles(makeScreenStyles);
+  return (
+    <SafeAreaView style={screenStyles.container} edges={["top"]}>
+      {/* Header — title + tagline + search bar + chips */}
+      <View style={screenStyles.header}>
+        <View style={screenStyles.headerTopRow}>
+          <View>
+            <Skeleton width={170} height={28} borderRadius={6} />
+            <View style={{ height: 6 }} />
+            <Skeleton width={140} height={12} borderRadius={4} />
+          </View>
+          <Skeleton width={40} height={40} borderRadius={radius.full} />
+        </View>
+
+        <Skeleton
+          width="100%"
+          height={48}
+          borderRadius={radius.lg}
+          style={{ marginBottom: spacing.md }}
+        />
+
+        <View style={{ flexDirection: "row", gap: spacing.sm }}>
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <View key={i} style={{ width: 68, alignItems: "center" }}>
+              <Skeleton width={60} height={60} borderRadius={radius.full} />
+              <View style={{ height: spacing.xs }} />
+              <Skeleton width={40} height={10} borderRadius={4} />
+            </View>
+          ))}
+        </View>
+      </View>
+
+      <View style={screenStyles.headerDivider} />
+
+      {/* Content */}
+      <View style={{ flex: 1 }}>
+        {/* Featured section */}
+        <View style={screenStyles.sectionBlock}>
+          <View style={screenStyles.sectionRow}>
+            <Skeleton width={110} height={22} borderRadius={4} />
+            <Skeleton width={60} height={14} borderRadius={4} />
+          </View>
+          <View style={screenStyles.horizontalListContent}>
+            <View style={{ flexDirection: "row", gap: spacing.md }}>
+              <FeaturedCardSkeleton />
+              <FeaturedCardSkeleton />
+            </View>
+          </View>
+        </View>
+
+        {/* Near You section */}
+        <View style={screenStyles.sectionBlock}>
+          <View style={screenStyles.sectionRow}>
+            <Skeleton width={100} height={22} borderRadius={4} />
+          </View>
+          <View style={screenStyles.horizontalListContent}>
+            <View style={{ flexDirection: "row", gap: spacing.md }}>
+              <RestaurantSmallCardSkeleton />
+              <RestaurantSmallCardSkeleton />
+              <RestaurantSmallCardSkeleton />
+            </View>
+          </View>
+        </View>
+
+        {/* New Restaurants section */}
+        <View style={screenStyles.sectionBlock}>
+          <View style={screenStyles.sectionRow}>
+            <Skeleton width={150} height={22} borderRadius={4} />
+            <Skeleton width={60} height={14} borderRadius={4} />
+          </View>
+          <View style={screenStyles.horizontalListContent}>
+            <View style={{ flexDirection: "row", gap: spacing.md }}>
+              <RestaurantSmallCardSkeleton />
+              <RestaurantSmallCardSkeleton />
+              <RestaurantSmallCardSkeleton />
+            </View>
+          </View>
+        </View>
+      </View>
+    </SafeAreaView>
+  );
+}
+
 // ─── Home screen ─────────────────────────────────────────────────────────────
 
 interface UserLocation {
@@ -285,60 +376,41 @@ interface UserLocation {
   longitude: number;
 }
 
+// Stable empty fallback so memo deps don't churn while the feed loads.
+const EMPTY_RESTAURANTS: Restaurant[] = [];
+
 export default function HomeFeedScreen() {
   const router = useRouter();
   const { user } = useAuth();
+  const { styles: screenStyles, colors } = useThemedStyles(makeScreenStyles);
 
-  const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
-  const [featuredRestaurants, setFeaturedRestaurants] = useState<Restaurant[]>(
-    [],
-  );
+  // Home feed via React Query (src/hooks/useHomeFeed.ts): cached between
+  // visits (and offline via the persister), deduped, background-refetched on
+  // foreground. A failed refresh keeps the last good data automatically —
+  // the old hand-rolled keep-stale behavior, for free.
+  const feedQuery = useHomeFeed();
+  const restaurants = feedQuery.data?.restaurants ?? EMPTY_RESTAURANTS;
+  const featuredRestaurants = feedQuery.data?.featured ?? EMPTY_RESTAURANTS;
+  // Skeleton on first load AND on retry-after-error (no data to show yet).
+  const isLoading =
+    feedQuery.isPending || (feedQuery.isFetching && !feedQuery.data);
+  const isRefreshing = feedQuery.isRefetching;
+  // Only flip to the error screen when there's nothing to show.
+  const loadError =
+    feedQuery.isError && !feedQuery.data ? (feedQuery.error as Error) : null;
+
   const [searchQuery, setSearchQuery] = useState("");
   const [activeCategory, setActiveCategory] = useState<string>("all");
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
   const [locationError, setLocationError] = useState(false);
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [spotOfTheDay, setSpotOfTheDay] = useState<SpotOfTheDay | null>(null);
+  const [filters, setFilters] = useState<HomeFilters>(DEFAULT_FILTERS);
+  const [filterOpen, setFilterOpen] = useState(false);
 
-  const fetchAll = useCallback(async () => {
-    try {
-      const [allPage, featuredPage] = await Promise.all([
-        listRestaurants({ pageSize: 50, sort: "recent" }),
-        listRestaurants({
-          pageSize: 10,
-          sort: "rating",
-          filters: { featured: true },
-        }),
-      ]);
-
-      const allIds = [
-        ...allPage.items.map((r) => r.id),
-        ...featuredPage.items.map((r) => r.id),
-      ];
-      const statsMap = await getReviewStatsForRestaurants(allIds);
-
-      const merge = (r: Restaurant): Restaurant => {
-        const stats = statsMap.get(r.id);
-        return stats
-          ? { ...r, averageRating: stats.average, reviewCount: stats.count }
-          : r;
-      };
-
-      setRestaurants(allPage.items.map(merge));
-      setFeaturedRestaurants(featuredPage.items.map(merge));
-    } catch (err) {
-      console.error("[home] fetch failed:", err);
-      Alert.alert(
-        "Couldn't load",
-        err instanceof Error ? err.message : "Try pulling down to refresh.",
-      );
-    } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
-    }
-  }, []);
+  // SERVER-side search over the whole catalogue (debounced). Local matches
+  // from the loaded feed show instantly; these fill in everything beyond it.
+  const debouncedQuery = useDebouncedValue(searchQuery, 300);
+  const searchResults = useRestaurantSearch(debouncedQuery);
 
   const requestLocation = useCallback(async () => {
     try {
@@ -356,33 +428,65 @@ export default function HomeFeedScreen() {
       });
       setLocationError(false);
     } catch {
+      // Location is decorative — Sentry-only, no UI surface needed; the
+      // existing "Location access needed" tile handles user feedback.
       setLocationError(true);
     }
   }, []);
 
   useEffect(() => {
-    fetchAll();
     requestLocation();
-  }, [fetchAll, requestLocation]);
+  }, [requestLocation]);
 
-  const onRefresh = useCallback(() => {
-    setIsRefreshing(true);
-    setVisibleCount(PAGE_SIZE);
-    fetchAll();
-  }, [fetchAll]);
-
-  const loadMore = useCallback(() => {
-    if (isLoadingMore) return;
-    setIsLoadingMore(true);
-    setTimeout(() => {
-      setVisibleCount((prev) => prev + LOAD_MORE_SIZE);
-      setIsLoadingMore(false);
-    }, 300);
-  }, [isLoadingMore]);
-
+  // Onboarding taste favorites — personalize the All Spots ordering. Loaded
+  // once; empty (no personalization) on failure.
+  const [favoriteCuisines, setFavoriteCuisines] = useState<Set<string>>(
+    new Set(),
+  );
+  const [favoriteParishes, setFavoriteParishes] = useState<Set<Parish>>(
+    new Set(),
+  );
   useEffect(() => {
-    setVisibleCount(PAGE_SIZE);
-  }, [searchQuery, activeCategory]);
+    let active = true;
+    getTastePreferences()
+      .then((p) => {
+        if (!active) return;
+        setFavoriteCuisines(
+          new Set(p.favoriteCuisines.map((c) => c.toLowerCase())),
+        );
+        setFavoriteParishes(new Set(p.favoriteParishes));
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Resolve Spot of the Day whenever the restaurant list changes (load/refresh).
+  // Tolerant: any failure (incl. the manual-pin config) just hides the hero.
+  useEffect(() => {
+    if (restaurants.length === 0) {
+      setSpotOfTheDay(null);
+      return;
+    }
+    let active = true;
+    resolveSpotOfTheDay(restaurants)
+      .then((spot) => {
+        if (active) setSpotOfTheDay(spot);
+      })
+      .catch(() => {
+        if (active) setSpotOfTheDay(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [restaurants]);
+
+  const { refetch: refetchFeed } = feedQuery;
+  const onRefresh = useCallback(() => {
+    refetchFeed();
+  }, [refetchFeed]);
+  const handleRetry = onRefresh;
 
   const nearbyRestaurants = useMemo(() => {
     if (!userLocation) return [];
@@ -401,7 +505,26 @@ export default function HomeFeedScreen() {
       .slice(0, 8);
   }, [restaurants, userLocation]);
 
-  const filteredRestaurants = useMemo(() => {
+  // Distance (km) per restaurant for the "Nearest" sort. Empty without location.
+  const distanceById = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!userLocation) return map;
+    for (const r of restaurants) {
+      map.set(
+        r.id,
+        getDistanceKm(
+          userLocation.latitude,
+          userLocation.longitude,
+          r.latitude,
+          r.longitude,
+        ),
+      );
+    }
+    return map;
+  }, [restaurants, userLocation]);
+
+  // Category + search filter — the base the filter sheet counts against.
+  const searchedRestaurants = useMemo(() => {
     let list = restaurants;
     if (activeCategory !== "all") {
       const cat = activeCategory.toLowerCase();
@@ -419,17 +542,90 @@ export default function HomeFeedScreen() {
           r.cuisines.some((c) => c.toLowerCase().includes(q)) ||
           r.categories.some((c) => c.toLowerCase().includes(q)),
       );
+      // Merge in server matches beyond the loaded feed (deduped). They
+      // already match the query server-side — incl. parish/city, which the
+      // local filter doesn't check — so only the category filter reapplies.
+      const server = searchResults.data;
+      if (server && server.length > 0) {
+        const have = new Set(list.map((r) => r.id));
+        const cat = activeCategory.toLowerCase();
+        const extras = server.filter(
+          (r) =>
+            !have.has(r.id) &&
+            (activeCategory === "all" ||
+              r.cuisines.some((c) => c.toLowerCase() === cat) ||
+              r.categories.some((c) => c.toLowerCase() === cat)),
+        );
+        if (extras.length > 0) list = [...list, ...extras];
+      }
     }
     return list;
-  }, [restaurants, searchQuery, activeCategory]);
+  }, [restaurants, searchQuery, activeCategory, searchResults.data]);
 
-  const newRestaurants = useMemo(() => restaurants.slice(0, 5), [restaurants]);
+  const activeFilterCount = countActiveFilters(filters);
 
-  const paginatedRestaurants = useMemo(
-    () => filteredRestaurants.slice(0, visibleCount),
-    [filteredRestaurants, visibleCount],
+  // Apply the filter-sheet filters (rating / price / sort / verified) on top.
+  const filteredRestaurants = useMemo(
+    () => applyHomeFilters(searchedRestaurants, filters, distanceById),
+    [searchedRestaurants, filters, distanceById],
   );
-  const hasMore = visibleCount < filteredRestaurants.length;
+
+  // New = strictly the most recently added, regardless of feed order.
+  const newRestaurants = useMemo(
+    () =>
+      [...restaurants]
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 5),
+    [restaurants],
+  );
+
+  // Hidden Gems — great rating, still few reviews. Best first (highest rating,
+  // then fewest reviews = most under-the-radar).
+  const hiddenGems = useMemo(
+    () =>
+      restaurants
+        .filter(
+          (r) =>
+            r.reviewCount >= GEM_MIN_REVIEWS &&
+            r.reviewCount <= GEM_MAX_REVIEWS &&
+            r.averageRating >= GEM_MIN_RATING,
+        )
+        .sort(
+          (a, b) =>
+            b.averageRating - a.averageRating || a.reviewCount - b.reviewCount,
+        )
+        .slice(0, HIDDEN_GEMS_MAX),
+    [restaurants],
+  );
+
+  // Default view = no search and "All" category. Only then do we cap the
+  // All Spots feed to a preview + route to the dedicated /restaurants/all
+  // page. When the user is searching or filtering by category we show every
+  // match inline (no cap, no "see all"), so results are never hidden.
+  const isDefaultView =
+    !searchQuery && activeCategory === "all" && activeFilterCount === 0;
+
+  // In the default view the All Spots preview uses the SAME personalized
+  // ranking (taste + location + seeded shuffle) and the SAME shared seed as the
+  // /restaurants/all "See all" page, so the preview and See-all match.
+  const visibleSpots = useMemo(() => {
+    if (!isDefaultView) return filteredRestaurants;
+    const ranked = rankAllSpots(filteredRestaurants, {
+      favoriteCuisines,
+      favoriteParishes,
+      userLocation,
+      seed: ALL_SPOTS_SEED,
+    });
+    return ranked.slice(0, ALL_SPOTS_PREVIEW);
+  }, [
+    isDefaultView,
+    filteredRestaurants,
+    favoriteCuisines,
+    favoriteParishes,
+    userLocation,
+  ]);
+  const hasMoreSpots =
+    isDefaultView && filteredRestaurants.length > ALL_SPOTS_PREVIEW;
 
   const handlePress = useCallback(
     (id: string) => router.push(`/restaurant/${id}`),
@@ -446,6 +642,11 @@ export default function HomeFeedScreen() {
     [router],
   );
 
+  const handleSeeAllSpots = useCallback(
+    () => router.push("/restaurants/all"),
+    [router],
+  );
+
   const handleBellPress = useCallback(() => {
     router.push("/notifications");
   }, [router]);
@@ -456,18 +657,30 @@ export default function HomeFeedScreen() {
         restaurant={item}
         onPress={handlePress}
         animationDelay={index * 60}
+        distance={
+          filters.sort === "nearest" ? distanceById.get(item.id) : undefined
+        }
       />
     ),
-    [handlePress],
+    [handlePress, filters.sort, distanceById],
   );
 
   const renderListHeader = useCallback(
     () => (
       <View>
+        {/* Spot of the Day */}
+        {isDefaultView && spotOfTheDay ? (
+          <View style={screenStyles.spotWrap}>
+            <SpotOfTheDayHero
+              restaurant={spotOfTheDay.restaurant}
+              thumbnailImageId={spotOfTheDay.thumbnailImageId}
+              onPress={handlePress}
+            />
+          </View>
+        ) : null}
+
         {/* Featured */}
-        {!searchQuery &&
-        activeCategory === "all" &&
-        featuredRestaurants.length > 0 ? (
+        {isDefaultView && featuredRestaurants.length > 0 ? (
           <View style={screenStyles.sectionBlock}>
             <View style={screenStyles.sectionRow}>
               <Text style={screenStyles.sectionTitle}>Featured</Text>
@@ -489,7 +702,7 @@ export default function HomeFeedScreen() {
         ) : null}
 
         {/* Near You */}
-        {!searchQuery && activeCategory === "all" ? (
+        {isDefaultView ? (
           <View style={screenStyles.sectionBlock}>
             <View style={screenStyles.sectionRow}>
               <View style={screenStyles.sectionTitleRow}>
@@ -507,12 +720,15 @@ export default function HomeFeedScreen() {
               </View>
             </View>
 
+            {/* Location not yet acquired — show skeleton cards instead of a
+                spinner, matching the post-load layout. */}
             {!userLocation && !locationError ? (
-              <View style={screenStyles.locationLoading}>
-                <ActivityIndicator size="small" color={colors.primary} />
-                <Text style={screenStyles.locationLoadingText}>
-                  Getting your location…
-                </Text>
+              <View style={screenStyles.horizontalListContent}>
+                <View style={{ flexDirection: "row", gap: spacing.md }}>
+                  <RestaurantSmallCardSkeleton />
+                  <RestaurantSmallCardSkeleton />
+                  <RestaurantSmallCardSkeleton />
+                </View>
               </View>
             ) : null}
 
@@ -570,9 +786,7 @@ export default function HomeFeedScreen() {
         ) : null}
 
         {/* New Restaurants */}
-        {!searchQuery &&
-        activeCategory === "all" &&
-        newRestaurants.length > 0 ? (
+        {isDefaultView && newRestaurants.length > 0 ? (
           <View style={screenStyles.sectionBlock}>
             <View style={screenStyles.sectionRow}>
               <View style={screenStyles.sectionTitleRow}>
@@ -600,43 +814,99 @@ export default function HomeFeedScreen() {
           </View>
         ) : null}
 
-        {/* All Spots header */}
+        {/* Hidden Gems — highly rated, still under the radar */}
+        {isDefaultView && hiddenGems.length > 0 ? (
+          <View style={screenStyles.sectionBlock}>
+            <View style={screenStyles.sectionRow}>
+              <View style={screenStyles.sectionTitleRow}>
+                <Text style={screenStyles.sectionTitle}>Hidden Gems</Text>
+                <MaterialCommunityIcons
+                  name="diamond-stone"
+                  size={16}
+                  color={colors.primary}
+                />
+              </View>
+            </View>
+            <FlatList
+              horizontal
+              data={hiddenGems}
+              keyExtractor={(item) => `gem-${item.id}`}
+              renderItem={({ item }) => (
+                <RestaurantSmallCard
+                  restaurant={item}
+                  hideDistance
+                  onPress={handlePress}
+                />
+              )}
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={screenStyles.horizontalListContent}
+            />
+          </View>
+        ) : null}
+
+        {/* All Spots header — in the default view the count slot becomes a
+            "See all" link to /restaurants/all. When searching/filtering we
+            show the match count instead, since everything is already on
+            screen. */}
         <View style={screenStyles.allSpotsHeader}>
           <Text style={screenStyles.sectionTitle}>
-            {searchQuery
+            {searchQuery || activeFilterCount > 0
               ? "Results"
               : activeCategory !== "all"
                 ? CATEGORIES.find((c) => c.id === activeCategory)?.label
                 : "All Spots"}
           </Text>
-          <Text style={screenStyles.countText}>
-            {filteredRestaurants.length} places
-          </Text>
+          {isDefaultView ? (
+            <SeeAllButton onPress={handleSeeAllSpots} />
+          ) : (
+            <Text style={screenStyles.countText}>
+              {filteredRestaurants.length} places
+            </Text>
+          )}
         </View>
       </View>
     ),
     [
       searchQuery,
       activeCategory,
+      spotOfTheDay,
       featuredRestaurants,
       nearbyRestaurants,
       newRestaurants,
+      hiddenGems,
       filteredRestaurants.length,
+      isDefaultView,
+      activeFilterCount,
       userLocation,
       locationError,
       handlePress,
       handleSeeAllFeatured,
       handleSeeAllNew,
+      handleSeeAllSpots,
       requestLocation,
+      screenStyles,
+      colors,
     ],
   );
 
   if (isLoading) {
+    return <HomeSkeleton />;
+  }
+
+  // Empty AND failed → show the error screen instead of the popup. The
+  // old Alert.alert was disruptive and required dismissal before the
+  // user could even pull to refresh.
+  if (loadError && restaurants.length === 0) {
     return (
-      <View style={screenStyles.loadingContainer}>
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={screenStyles.loadingText}>Finding the best spots…</Text>
-      </View>
+      <SafeAreaView style={screenStyles.container} edges={["top"]}>
+        <ErrorState
+          variant="screen"
+          icon="cloud-off-outline"
+          title="Couldn't load Hidden Plate"
+          body="Check your connection and try again."
+          onRetry={handleRetry}
+        />
+      </SafeAreaView>
     );
   }
 
@@ -658,65 +928,83 @@ export default function HomeFeedScreen() {
           <NotificationBell onPress={handleBellPress} />
         </View>
 
-        <View style={screenStyles.searchBar}>
-          <MaterialCommunityIcons
-            name="magnify"
-            size={20}
-            color={colors.textMuted}
-            style={{ marginRight: spacing.sm }}
-          />
-          <TextInput
-            style={screenStyles.searchInput}
-            placeholder="Search restaurants, cuisines…"
-            placeholderTextColor={colors.textMuted}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            returnKeyType="search"
-          />
-          {searchQuery.length > 0 ? (
-            <Pressable onPress={() => setSearchQuery("")} hitSlop={8}>
-              <MaterialCommunityIcons
-                name="close-circle"
-                size={18}
-                color={colors.textMuted}
-              />
-            </Pressable>
-          ) : null}
+        <View style={screenStyles.searchRow}>
+          <View style={screenStyles.searchBar}>
+            <MaterialCommunityIcons
+              name="magnify"
+              size={20}
+              color={colors.textSecondary}
+              style={{ marginRight: spacing.sm }}
+            />
+            <TextInput
+              style={screenStyles.searchInput}
+              placeholder="Search restaurants, cuisines…"
+              placeholderTextColor={colors.textMuted}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              returnKeyType="search"
+            />
+            {searchQuery.length > 0 ? (
+              <Pressable onPress={() => setSearchQuery("")} hitSlop={8}>
+                <MaterialCommunityIcons
+                  name="close-circle"
+                  size={18}
+                  color={colors.textMuted}
+                />
+              </Pressable>
+            ) : null}
+          </View>
+
+          <Pressable
+            onPress={() => setFilterOpen(true)}
+            style={[
+              screenStyles.filterBtn,
+              activeFilterCount > 0 && screenStyles.filterBtnActive,
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={
+              activeFilterCount > 0
+                ? `Filters, ${activeFilterCount} active`
+                : "Filters"
+            }
+          >
+            <MaterialCommunityIcons
+              name="tune-variant"
+              size={22}
+              color={
+                activeFilterCount > 0 ? colors.primary : colors.textSecondary
+              }
+            />
+            {activeFilterCount > 0 ? (
+              <View style={screenStyles.filterBadge}>
+                <Text style={screenStyles.filterBadgeText}>
+                  {activeFilterCount}
+                </Text>
+              </View>
+            ) : null}
+          </Pressable>
         </View>
 
-        <FlatList
-          horizontal
-          data={CATEGORIES}
-          keyExtractor={(item) => item.id}
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={screenStyles.chipsContent}
-          renderItem={({ item }) => (
-            <CategoryChip
-              item={item}
-              isActive={activeCategory === item.id}
-              onPress={() => setActiveCategory(item.id)}
-            />
-          )}
+        <CategoryChips
+          activeId={activeCategory}
+          onSelect={setActiveCategory}
         />
       </Animated.View>
 
       <View style={screenStyles.headerDivider} />
 
       <FlatList
-        data={paginatedRestaurants}
+        data={visibleSpots}
         keyExtractor={(item) => item.id}
         renderItem={renderFeedItem}
         ListHeaderComponent={renderListHeader}
         contentContainerStyle={screenStyles.feedContent}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
-        removeClippedSubviews
-        initialNumToRender={5}
-        maxToRenderPerBatch={5}
-        windowSize={5}
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={11}
         style={screenStyles.feedList}
-        onEndReached={hasMore ? loadMore : undefined}
-        onEndReachedThreshold={0.3}
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}
@@ -727,17 +1015,21 @@ export default function HomeFeedScreen() {
         }
         ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
         ListFooterComponent={
-          hasMore ? (
+          hasMoreSpots ? (
             <Pressable
-              style={screenStyles.loadMoreBtn}
-              onPress={loadMore}
-              disabled={isLoadingMore}
+              style={screenStyles.viewAllBtn}
+              onPress={handleSeeAllSpots}
+              accessibilityRole="button"
+              accessibilityLabel={`View all ${filteredRestaurants.length} places`}
             >
-              {isLoadingMore ? (
-                <ActivityIndicator size="small" color={colors.primary} />
-              ) : (
-                <Text style={screenStyles.loadMoreText}>Load more places</Text>
-              )}
+              <Text style={screenStyles.viewAllText}>
+                View all {filteredRestaurants.length} places
+              </Text>
+              <MaterialCommunityIcons
+                name="arrow-right"
+                size={18}
+                color={colors.primary}
+              />
             </Pressable>
           ) : (
             <View style={{ height: spacing.xl }} />
@@ -762,19 +1054,34 @@ export default function HomeFeedScreen() {
           </Animated.View>
         }
       />
+
+      <HomeFilterSheet
+        visible={filterOpen}
+        initial={filters}
+        baseList={searchedRestaurants}
+        hasLocation={!!userLocation}
+        onApply={(next) => {
+          setFilters(next);
+          setFilterOpen(false);
+        }}
+        onClose={() => setFilterOpen(false)}
+      />
     </SafeAreaView>
   );
 }
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
-const screenStyles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.pageBackground },
+function makeScreenStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
+  // Full page surface — matches Community, Saved, and Profile.
+  container: { flex: 1, backgroundColor: colors.cardBackground },
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: colors.pageBackground,
+    backgroundColor: colors.cardBackground,
     gap: spacing.md,
   },
   loadingText: {
@@ -809,27 +1116,78 @@ const screenStyles = StyleSheet.create({
     marginTop: 2,
   },
 
-  searchBar: {
+  // Search row — an elevated white search pill + a circular filter button.
+  searchRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: colors.pageBackground,
-    borderRadius: radius.lg,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
+    gap: spacing.sm,
     marginBottom: spacing.md,
+  },
+  searchBar: {
+    flex: 1,
+    height: 52,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.cardBackground,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.lg,
     borderWidth: 1,
     borderColor: colors.divider,
+    ...shadows.sm,
   },
   searchInput: {
     flex: 1,
     fontFamily: fonts.regular,
     fontSize: T.size.base,
     color: colors.textPrimary,
+    padding: 0,
   },
-  chipsContent: { gap: spacing.sm, paddingBottom: spacing.xs },
+  filterBtn: {
+    width: 52,
+    height: 52,
+    borderRadius: radius.full,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.cardBackground,
+    borderWidth: 1,
+    borderColor: colors.divider,
+    ...shadows.sm,
+  },
+  filterBtnActive: {
+    backgroundColor: colors.primaryLight,
+    borderColor: colors.primary,
+  },
+  filterBadge: {
+    position: "absolute",
+    top: -6,
+    right: -6,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 4,
+    borderWidth: 2,
+    borderColor: colors.cardBackground,
+  },
+  filterBadgeText: {
+    fontFamily: fonts.bold,
+    fontSize: 10,
+    color: colors.textInverse,
+    lineHeight: 12,
+  },
 
-  feedList: { backgroundColor: colors.pageBackground },
+  // Feed list now sits on the white page surface.
+  feedList: { backgroundColor: colors.cardBackground },
   feedContent: { paddingTop: spacing.sm, paddingBottom: 100 },
+
+  // Spot of the Day hero wrapper — screen padding around the gradient banner.
+  spotWrap: {
+    paddingHorizontal: spacing.screen,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xs,
+  },
 
   sectionRow: {
     flexDirection: "row",
@@ -843,7 +1201,10 @@ const screenStyles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     paddingHorizontal: spacing.screen,
+    paddingTop: spacing.lg,
     marginBottom: spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.divider,
   },
   sectionTitleRow: {
     flexDirection: "row",
@@ -867,11 +1228,14 @@ const screenStyles = StyleSheet.create({
     gap: spacing.md,
   },
 
+  // Section blocks no longer paint their own white background — the whole
+  // page is white. Visual separation comes from a hairline divider at
+  // the bottom of each section.
   sectionBlock: {
-    backgroundColor: colors.cardBackground,
     paddingTop: spacing.lg,
     paddingBottom: spacing.lg,
-    marginBottom: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.divider,
   },
 
   seeAllBtn: {
@@ -899,18 +1263,6 @@ const screenStyles = StyleSheet.create({
     fontFamily: fonts.bold,
     fontSize: T.size.xs,
     color: colors.primary,
-  },
-  locationLoading: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: spacing.screen,
-    gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  locationLoadingText: {
-    fontFamily: fonts.regular,
-    fontSize: T.size.sm,
-    color: colors.textMuted,
   },
   locationDenied: {
     alignItems: "center",
@@ -942,19 +1294,24 @@ const screenStyles = StyleSheet.create({
     letterSpacing: T.tracking.wider,
   },
 
-  loadMoreBtn: {
+  // "View all" footer — replaces the old "Load more" button. Sends the
+  // user to /restaurants/all rather than expanding the list in place.
+  // Uses pageBackground fill so it stays visible on the now-white page.
+  viewAllBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
     marginHorizontal: spacing.screen,
     marginTop: spacing.lg,
     marginBottom: 100,
     paddingVertical: spacing.lg,
     borderRadius: radius.xl,
-    backgroundColor: colors.cardBackground,
+    backgroundColor: colors.pageBackground,
     borderWidth: 1,
     borderColor: colors.divider,
-    alignItems: "center",
-    justifyContent: "center",
   },
-  loadMoreText: {
+  viewAllText: {
     fontFamily: fonts.bold,
     fontSize: T.size.base,
     color: colors.primary,
@@ -987,9 +1344,12 @@ const screenStyles = StyleSheet.create({
     textAlign: "center",
     lineHeight: T.leading.normal,
   },
-});
+  });
+}
 
-const featuredStyles = StyleSheet.create({
+function makeFeaturedStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   card: {
     width: size.featuredCardWidth,
     height: size.featuredCardHeight,
@@ -1049,7 +1409,7 @@ const featuredStyles = StyleSheet.create({
   ratingValue: {
     fontFamily: fonts.bold,
     fontSize: 13,
-    color: colors.cardBackground,
+    color: colors.textInverse,
   },
   ratingCount: {
     fontFamily: fonts.regular,
@@ -1073,31 +1433,5 @@ const featuredStyles = StyleSheet.create({
     fontSize: 12,
     color: "rgba(255,255,255,0.65)",
   },
-});
-
-const chipStyles = StyleSheet.create({
-  chip: {
-    flexDirection: "row",
-    alignItems: "center",
-    height: size.chipHeight,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.full,
-    backgroundColor: colors.pageBackground,
-    borderWidth: 1,
-    borderColor: colors.divider,
-  },
-  chipActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-    ...shadows.sm,
-  },
-  label: {
-    fontFamily: fonts.medium,
-    fontSize: T.size.sm,
-    color: colors.textMuted,
-  },
-  labelActive: {
-    fontFamily: fonts.bold,
-    color: colors.textInverse,
-  },
-});
+  });
+}

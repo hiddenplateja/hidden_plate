@@ -22,7 +22,9 @@ import {
     View,
 } from "react-native";
 
-import { colors, radius, spacing, typography } from "@/theme/colors";
+import { radius, spacing, typography } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 
 export interface PickedPhoto {
   // Local URI from the picker. Stable for the duration of the screen.
@@ -46,6 +48,7 @@ export function ImagePickerField({
   disabled = false,
 }: ImagePickerFieldProps) {
   const [picking, setPicking] = useState(false);
+  const { styles, colors } = useThemedStyles(makeStyles);
 
   const remaining = max - photos.length;
 
@@ -155,7 +158,9 @@ export function ImagePickerField({
 
 const THUMB_SIZE = 84;
 
-const styles = StyleSheet.create({
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   row: {
     flexDirection: "row",
     paddingVertical: spacing.xs,
@@ -215,4 +220,5 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textSecondary,
   },
-});
+  });
+}

@@ -11,6 +11,14 @@
 //
 // "visited" and "want_to_go" are mutually exclusive — adding to one removes
 //   the other, matching the UX convention from the old app.
+//
+// Error handling:
+//   Read paths called by screens (listSavedByUser, listSavedRestaurants,
+//   getMySavedCount) throw on failure so screens can show an error UI.
+//   getSavedStatus stays tolerant (falls back to "nothing saved") because
+//   it's part of restaurant detail bootstrap — showing an error there for
+//   a missing save status would be over-aggressive. All failures report
+//   to Sentry regardless of whether they throw.
 
 import {
   AppwriteException,
@@ -21,6 +29,7 @@ import {
 } from "react-native-appwrite";
 
 import { account, appwriteConfig, databases } from "@/services/appwrite";
+import { captureError } from "@/services/sentry";
 import type { Restaurant } from "@/types/restaurant";
 
 export type ListType = "favorite" | "want_to_go" | "visited";
@@ -65,7 +74,11 @@ function mapDoc(doc: RawSavedDoc): SavedDoc {
 /**
  * Get the current user's save status for a restaurant.
  * Returns a map of listType → doc ID (or null if not saved in that list).
- * Use this to initialize the save buttons on the detail screen.
+ *
+ * Tolerant: if the read fails (network, etc.), returns all-null and
+ * reports to Sentry. The restaurant detail screen treats this as "nothing
+ * saved" rather than surfacing an error — saving is a secondary action
+ * and showing a full-screen error here would block the main content.
  */
 export async function getSavedStatus(
   restaurantId: string,
@@ -100,7 +113,11 @@ export async function getSavedStatus(
       }
     }
   } catch (err) {
-    console.warn("[saved] getSavedStatus failed:", err);
+    captureError(err, {
+      service: "saved",
+      op: "getSavedStatus",
+      restaurantId,
+    });
   }
   return status;
 }
@@ -175,6 +192,12 @@ export async function toggleSaved(
       }
     }
   } catch (err) {
+    captureError(err, {
+      service: "saved",
+      op: "toggleSaved",
+      restaurantId,
+      listType,
+    });
     if (err instanceof AppwriteException) {
       throw new SavedError(err.message || "Failed to update saved list.");
     }
@@ -188,21 +211,32 @@ export async function toggleSaved(
  * list type. Used by the profile tab's "Saved" sub-section.
  *
  * Returns newest-saved first (sorted by $createdAt desc).
+ *
+ * Throws if the read fails. Callers (saved tab, profile preview) should
+ * catch and render an error state with retry.
+ *
+ * @param listType  Optional — filter to a single bucket.
+ * @param limit     Optional — cap the result count. Defaults to 200 so
+ *                  the full Saved tab keeps working unchanged. Profile's
+ *                  Saved preview passes a small number (e.g. 6).
  */
 export async function listSavedByUser(
   listType?: ListType,
+  limit = 200,
 ): Promise<SavedDoc[]> {
   let me;
   try {
     me = await account.get();
   } catch {
+    // Not signed in — return empty without throwing. This is a state, not
+    // an error; the screen should route to login.
     return [];
   }
 
   const queries: string[] = [
     Query.equal("userId", me.$id),
     Query.orderDesc("$createdAt"),
-    Query.limit(200),
+    Query.limit(limit),
   ];
   if (listType) queries.push(Query.equal("listType", listType));
 
@@ -214,8 +248,12 @@ export async function listSavedByUser(
     );
     return (res.documents as unknown as RawSavedDoc[]).map(mapDoc);
   } catch (err) {
-    console.warn("[saved] listSavedByUser failed:", err);
-    return [];
+    captureError(err, {
+      service: "saved",
+      op: "listSavedByUser",
+      listType: listType ?? "all",
+    });
+    throw new SavedError("Couldn't load your saved restaurants.");
   }
 }
 
@@ -225,11 +263,20 @@ export async function listSavedByUser(
  *
  * Missing restaurants (deleted from the platform) are returned with
  * restaurant=null so the UI can render a "Currently unavailable" state.
+ *
+ * Throws if the underlying listSavedByUser throws. Restaurant lookups are
+ * tolerant — a failure there leaves restaurant=null on the affected rows
+ * but doesn't fail the whole call.
+ *
+ * @param listType  Required — which bucket to fetch.
+ * @param limit     Optional — caps the underlying listSavedByUser call.
+ *                  Profile's Saved preview uses 6 (5 + 1 to detect overflow).
  */
 export async function listSavedRestaurants(
   listType: ListType,
+  limit?: number,
 ): Promise<{ saved: SavedDoc; restaurant: Restaurant | null }[]> {
-  const savedDocs = await listSavedByUser(listType);
+  const savedDocs = await listSavedByUser(listType, limit);
   if (savedDocs.length === 0) return [];
 
   // Import inline to avoid circular dependency at module load
@@ -251,6 +298,9 @@ export async function listSavedRestaurants(
  * Note: this only works for the *current* user's own counts. Other users'
  * saves are private (per-doc Read permission) and can't be counted by anyone
  * else — which is by design.
+ *
+ * Tolerant: returns 0 on failure (with Sentry report) rather than throwing.
+ * Profile stats shouldn't fail-stop the whole header if one count errors.
  */
 export async function getMySavedCount(): Promise<number> {
   let me;
@@ -268,7 +318,7 @@ export async function getMySavedCount(): Promise<number> {
     // total is the count, not the array length
     return res.total;
   } catch (err) {
-    console.warn("[saved] getMySavedCount failed:", err);
+    captureError(err, { service: "saved", op: "getMySavedCount" });
     return 0;
   }
 }

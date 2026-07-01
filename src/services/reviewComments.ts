@@ -5,19 +5,10 @@
 //   Read: any logged-in user
 //   Delete: only the comment author
 //
-// Counter strategy: same as reviewLikes. The reviews collection only allows
-// the review's author to Update — other users can't bump commentCount
-// client-side. We route bumps through the send-notification Function.
+// Counter strategy: same as reviewLikes. Routed through send-notification.
 //
-// Flow on add:
-//   1. Fetch the parent review to get the author's userId (for notification)
-//   2. Create the comment doc (source of truth)
-//   3. triggerCommentNotification — Function bumps commentCount AND notifies
-//
-// Flow on delete:
-//   1. Delete the comment doc (source of truth)
-//   2. Attempt client-side decrement (will fail silently for non-authors;
-//      acceptable drift, reconciled by periodic recount script)
+// Content moderation: URL rejection enforced in validateText, plus a
+// server-side check inside the Function (defense in depth).
 
 import {
   AppwriteException,
@@ -34,8 +25,7 @@ import type {
   CreateCommentInput,
   ReviewComment,
 } from "@/types/reviewComment";
-
-// ---------- Errors ----------
+import { URL_REJECTION_MESSAGE, containsUrl } from "@/utils/contentValidation";
 
 export class CommentError extends Error {
   constructor(
@@ -54,8 +44,6 @@ function toCommentError(err: unknown, fallback: string): CommentError {
   return new CommentError(fallback);
 }
 
-// ---------- Mapping ----------
-
 interface CommentDoc {
   $id: string;
   $createdAt: string;
@@ -65,7 +53,6 @@ interface CommentDoc {
   text: string;
 }
 
-/** Shape of the parent review doc — we only read the author here */
 interface ReviewAuthorDoc {
   $id: string;
   userId: string;
@@ -83,8 +70,6 @@ function mapDoc(doc: CommentDoc): ReviewComment {
   };
 }
 
-// ---------- Validation ----------
-
 function validateText(text: string): void {
   const trimmed = text.trim();
   if (trimmed.length === 0) {
@@ -93,9 +78,12 @@ function validateText(text: string): void {
   if (trimmed.length > 1000) {
     throw new CommentError("Comment must be 1000 characters or less.");
   }
+  // Reject external links. Client-side check is UX; the server-side check
+  // in the Appwrite Function (when text routes through it) is the boundary.
+  if (containsUrl(trimmed)) {
+    throw new CommentError(URL_REJECTION_MESSAGE);
+  }
 }
-
-// ---------- Public API ----------
 
 const PAGE_SIZE = 30;
 
@@ -104,9 +92,6 @@ interface ListOptions {
   pageSize?: number;
 }
 
-/**
- * List comments for a review, oldest first (chat order).
- */
 export async function listCommentsForReview(
   reviewId: string,
   options: ListOptions = {},
@@ -139,11 +124,6 @@ export async function listCommentsForReview(
   }
 }
 
-/**
- * Create a comment. Per-doc permissions:
- *   Read: any logged-in user
- *   Delete: only the author
- */
 export async function addComment(
   input: CreateCommentInput,
 ): Promise<ReviewComment> {
@@ -156,9 +136,6 @@ export async function addComment(
     throw new CommentError("You must be signed in to comment.");
   }
 
-  // Look up the parent review's author up front. We need this for the
-  // notification trigger; the counter bump happens server-side from the
-  // review ID alone.
   let reviewAuthorId: string | null = null;
   try {
     const review = (await databases.getDocument(
@@ -171,7 +148,6 @@ export async function addComment(
     console.warn("[comments] failed to fetch review author:", err);
   }
 
-  // Create the comment doc
   let createdDoc: CommentDoc;
   try {
     const doc = await databases.createDocument(
@@ -191,9 +167,6 @@ export async function addComment(
     throw toCommentError(err, "Failed to post comment.");
   }
 
-  // Fire-and-forget: notification trigger handles both the push and the
-  // server-side commentCount bump. Routes notification only if not a
-  // self-action and not deduped.
   if (reviewAuthorId) {
     triggerCommentNotification({
       recipientUserId: reviewAuthorId,
@@ -209,13 +182,6 @@ export async function addComment(
   return mapDoc(createdDoc);
 }
 
-/**
- * Delete a comment. Only the author can delete (enforced by permissions).
- *
- * commentCount decrement is best-effort and will silently fail for
- * non-author users (i.e. anyone other than the review's owner deleting
- * their own comment). Drift accepted; reconciled by periodic recount.
- */
 export async function deleteComment(
   commentId: string,
   reviewId: string,
@@ -230,7 +196,6 @@ export async function deleteComment(
     throw toCommentError(err, "Failed to delete comment.");
   }
 
-  // Best-effort decrement. Expected to fail for non-review-author users.
   try {
     const doc = (await databases.getDocument(
       appwriteConfig.databaseId,
@@ -246,7 +211,6 @@ export async function deleteComment(
       { commentCount: next },
     );
   } catch (err) {
-    // Expected for non-author users. Drift accepted.
     console.warn("[comments] commentCount decrement failed (expected):", err);
   }
 }

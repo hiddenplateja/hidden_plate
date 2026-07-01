@@ -2,7 +2,9 @@
 // Reusable full-width restaurant card — used in the home "All Spots" feed
 // and anywhere else a wide image+info stack fits (vertical lists).
 //
-// Design: large 200px image on top, info on bottom (white card background).
+// Design: borderless / "Uber Eats" style — no card surface, border, or
+// shadow. A large 200px rounded image with the info stacked directly on the
+// page background below it.
 // Stacked rows: name → rating (or "New listing") → cuisine line → location.
 // Cuisine line: "<first cuisine> • <up to 2 categories>" e.g. "Jamaican • Jerk • BBQ"
 // Location: prefers city, falls back to parish.
@@ -15,32 +17,36 @@
 // Distinct from:
 //   - RestaurantSmallCard (compact horizontal-scroll card)
 //   - RestaurantImageCard (full-bleed image with text-on-overlay)
+//
+// Also exports `RestaurantWideCardSkeleton` — the loading placeholder with
+// matching layout. The skeleton intentionally has no entrance animation
+// since it's only visible briefly before being replaced.
 
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { memo, useCallback } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, {
-    FadeInDown,
-    useAnimatedStyle,
-    useSharedValue,
-    withSpring,
+  FadeInDown,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
 } from "react-native-reanimated";
 
+import { OpenStatusBadge } from "@/components/OpenStatusBadge";
+import { RestaurantImagePlaceholder } from "@/components/RestaurantImagePlaceholder";
+import { Skeleton } from "@/components/Skeleton";
 import { getImagePreviewUrl } from "@/services/storage";
 import {
-    colors,
-    fonts,
-    radius,
-    shadows,
-    spacing,
-    typographyTokens as T,
+  fonts,
+  radius,
+  spacing,
+  typographyTokens as T,
 } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 import type { Restaurant } from "@/types/restaurant";
 import { getCuisineLine, getLocationLine } from "@/utils/restaurantDisplay";
-
-const STAR_COLOR =
-  (colors as unknown as Record<string, string>).star ?? "#F4A523";
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -55,6 +61,8 @@ interface RestaurantWideCardProps {
   animationDelay?: number;
   /** Override the card's horizontal margin (default: spacing.screen) */
   marginHorizontal?: number;
+  /** When set, shows the distance (km) on the location line — for "Nearest". */
+  distance?: number;
 }
 
 function coverUrl(r: Restaurant): string | null {
@@ -62,12 +70,19 @@ function coverUrl(r: Restaurant): string | null {
   return id ? getImagePreviewUrl(id) : null;
 }
 
+function formatDistance(km: number): string {
+  return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
+}
+
 export const RestaurantWideCard = memo(function RestaurantWideCard({
   restaurant,
   onPress,
   animationDelay,
   marginHorizontal,
+  distance,
 }: RestaurantWideCardProps) {
+  const { styles, colors } = useThemedStyles(makeStyles);
+  const STAR_COLOR = colors.star;
   const scale = useSharedValue(1);
   const animStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
@@ -82,6 +97,10 @@ export const RestaurantWideCard = memo(function RestaurantWideCard({
   const cuisineLine = getCuisineLine(restaurant);
   const locationLine = getLocationLine(restaurant);
   const hasReviews = restaurant.reviewCount > 0;
+  const distLabel =
+    typeof distance === "number" && distance >= 0
+      ? formatDistance(distance)
+      : null;
   const cardMarginHorizontal = marginHorizontal ?? spacing.screen;
 
   const cardElement = (
@@ -93,31 +112,26 @@ export const RestaurantWideCard = memo(function RestaurantWideCard({
       onPressOut={() => {
         scale.value = withSpring(1, { damping: 15, stiffness: 350 });
       }}
-      style={[
-        styles.card,
-        { marginHorizontal: cardMarginHorizontal },
-        animStyle,
-      ]}
+      style={[{ marginHorizontal: cardMarginHorizontal }, animStyle]}
       accessibilityRole="button"
       accessibilityLabel={`View ${restaurant.name}`}
     >
-      {url ? (
-        <Image
-          source={{ uri: url }}
-          style={styles.image}
-          contentFit="cover"
-          transition={250}
-          cachePolicy="memory-disk"
-        />
-      ) : (
-        <View style={[styles.image, styles.placeholder]}>
-          <MaterialCommunityIcons
-            name="silverware-fork-knife"
-            size={36}
-            color={colors.border}
+      <View style={styles.image}>
+        {/* Monogram tile sits BEHIND the image so a lazy-loading or missing
+            photo shows a per-restaurant initial — never a bare grey rectangle
+            while you scroll. The (full-res) image fades in over it once decoded. */}
+        <RestaurantImagePlaceholder name={restaurant.name} />
+        {url ? (
+          <Image
+            source={{ uri: url }}
+            style={StyleSheet.absoluteFill}
+            contentFit="cover"
+            transition={200}
+            cachePolicy="memory-disk"
+            recyclingKey={restaurant.id}
           />
-        </View>
-      )}
+        ) : null}
+      </View>
 
       <View style={styles.info}>
         <Text style={styles.name} numberOfLines={1}>
@@ -138,16 +152,35 @@ export const RestaurantWideCard = memo(function RestaurantWideCard({
           </Text>
         )}
 
+        <OpenStatusBadge hours={restaurant.openingHours} />
+
         {cuisineLine ? (
           <Text style={styles.subDetail} numberOfLines={1}>
             {cuisineLine}
           </Text>
         ) : null}
 
-        {locationLine ? (
-          <Text style={styles.locationText} numberOfLines={1}>
-            {locationLine}
-          </Text>
+        {locationLine || distLabel ? (
+          <View style={styles.locationRow}>
+            {locationLine ? (
+              <Text style={styles.locationText} numberOfLines={1}>
+                {locationLine}
+              </Text>
+            ) : null}
+            {distLabel ? (
+              <>
+                {locationLine ? (
+                  <Text style={styles.locationText}> · </Text>
+                ) : null}
+                <MaterialCommunityIcons
+                  name="map-marker"
+                  size={12}
+                  color={colors.primary}
+                />
+                <Text style={styles.distanceText}>{distLabel}</Text>
+              </>
+            ) : null}
+          </View>
         ) : null}
       </View>
     </AnimatedPressable>
@@ -165,29 +198,55 @@ export const RestaurantWideCard = memo(function RestaurantWideCard({
   return cardElement;
 });
 
-const styles = StyleSheet.create({
-  card: {
-    backgroundColor: colors.cardBackground,
-    borderRadius: radius.xl,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: colors.divider,
-    ...shadows.sm,
+// ─── Skeleton sibling ───────────────────────────────────────────────────────
+// Matches the real card's 200px image + paddings + 4 info rows. Renders
+// no entrance animation by default since skeletons are short-lived.
+
+interface RestaurantWideCardSkeletonProps {
+  marginHorizontal?: number;
+}
+
+export const RestaurantWideCardSkeleton = memo(
+  function RestaurantWideCardSkeleton({
+    marginHorizontal,
+  }: RestaurantWideCardSkeletonProps) {
+    const { styles } = useThemedStyles(makeStyles);
+    const m = marginHorizontal ?? spacing.screen;
+    return (
+      <View style={{ marginHorizontal: m }}>
+        {/* Image */}
+        <Skeleton width="100%" height={200} borderRadius={radius.md} />
+
+        <View style={styles.info}>
+          {/* Name */}
+          <Skeleton width="75%" height={20} borderRadius={4} />
+          {/* Rating row */}
+          <Skeleton width="35%" height={13} borderRadius={4} />
+          {/* Cuisine */}
+          <Skeleton width="60%" height={13} borderRadius={4} />
+          {/* Location */}
+          <Skeleton width="45%" height={11} borderRadius={4} />
+        </View>
+      </View>
+    );
   },
+);
+
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
+  // Borderless tile: the rounded image is the only "contained" element —
+  // no wrapper background, border, or shadow.
   image: {
     width: "100%",
     height: 200,
-    backgroundColor: colors.pageBackground,
-  },
-  placeholder: {
-    alignItems: "center",
-    justifyContent: "center",
+    borderRadius: radius.md,
+    overflow: "hidden",
     backgroundColor: colors.pageBackground,
   },
   info: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xs,
     gap: 4,
   },
   name: {
@@ -228,4 +287,15 @@ const styles = StyleSheet.create({
     fontSize: T.size.xs,
     color: colors.textMuted,
   },
-});
+  locationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  distanceText: {
+    fontFamily: fonts.bold,
+    fontSize: T.size.xs,
+    color: colors.primary,
+    marginLeft: 2,
+  },
+  });
+}

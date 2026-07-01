@@ -30,6 +30,8 @@ const WEIGHTS = {
   FOLLOWED_AUTHOR: 8,
   SAVED_RESTAURANT: 6,
   SAME_PARISH: 5,
+  FAVORITE_CUISINE: 4, // restaurant matches a cuisine the user picked at onboarding
+  FAVORITE_PARISH: 3, // restaurant is in a parish the user picked at onboarding
   QUALITY_MULTIPLIER: 0.5, // multiplied against averageRating (so ~0-2.5 pts)
   RANDOM_JITTER: 1,
 } as const;
@@ -44,6 +46,10 @@ export interface RankingContext {
   savedRestaurantIds: Set<string>;
   /** User's current parish (derived from location), or null if unavailable */
   userParish: Parish | null;
+  /** Lowercased cuisines/categories the user picked as favorites (onboarding). */
+  favoriteCuisines?: Set<string>;
+  /** Parishes the user picked as favorites (onboarding). */
+  favoriteParishes?: Set<Parish>;
   /** Reference timestamp (defaults to Date.now()). Useful for testing. */
   now?: number;
 }
@@ -60,6 +66,8 @@ export interface RankedFeedItem {
     followedAuthor: number;
     savedRestaurant: number;
     sameParish: number;
+    favoriteCuisine: number;
+    favoriteParish: number;
     quality: number;
     random: number;
   };
@@ -100,6 +108,27 @@ function scoreReview(
       ? WEIGHTS.SAME_PARISH
       : 0;
 
+  // Favorite cuisine — restaurant matches one of the user's picked cuisines
+  // (compared against both cuisines and categories, lowercased).
+  const favCuisines = ctx.favoriteCuisines;
+  const favoriteCuisine =
+    restaurant &&
+    favCuisines &&
+    favCuisines.size > 0 &&
+    [...restaurant.cuisines, ...restaurant.categories].some((c) =>
+      favCuisines.has(c.toLowerCase()),
+    )
+      ? WEIGHTS.FAVORITE_CUISINE
+      : 0;
+
+  // Favorite parish — explicit pick, separate from the location-derived signal.
+  const favoriteParish =
+    restaurant &&
+    ctx.favoriteParishes &&
+    ctx.favoriteParishes.has(restaurant.parish)
+      ? WEIGHTS.FAVORITE_PARISH
+      : 0;
+
   // Quality (restaurant's rating)
   const quality = restaurant
     ? restaurant.averageRating * WEIGHTS.QUALITY_MULTIPLIER
@@ -114,6 +143,8 @@ function scoreReview(
     followedAuthor +
     savedRestaurant +
     sameParish +
+    favoriteCuisine +
+    favoriteParish +
     quality +
     random;
 
@@ -127,6 +158,8 @@ function scoreReview(
       followedAuthor,
       savedRestaurant,
       sameParish,
+      favoriteCuisine,
+      favoriteParish,
       quality,
       random,
     },

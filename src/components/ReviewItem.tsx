@@ -8,6 +8,7 @@
 // Author info is passed in via the `author` prop — the parent screen is
 // responsible for batch-loading users for visible reviews (avoids N+1).
 
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { memo } from "react";
 import {
@@ -21,14 +22,16 @@ import {
 
 import { Avatar } from "@/components/Avatar";
 import { StarRating } from "@/components/StarRating";
+import type { ReviewResponse } from "@/services/reviewResponses";
 import { getImageViewUrl } from "@/services/storage";
 import {
-  colors,
   fonts,
   radius,
   spacing,
   typographyTokens as T,
 } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 import type { Review } from "@/types/review";
 import type { User } from "@/types/user";
 
@@ -43,6 +46,10 @@ interface ReviewItemProps {
   onDelete?: (review: Review) => void;
   onPhotoTap?: (imageIds: string[], startIndex: number) => void;
   onAuthorPress?: (userId: string) => void;
+  /** Tap the row to open the full review (comments + owner reply). */
+  onOpen?: (review: Review) => void;
+  /** The restaurant owner's reply to this review, shown inline (read-only). */
+  ownerReply?: ReviewResponse | null;
 }
 
 function ReviewItemImpl({
@@ -56,9 +63,16 @@ function ReviewItemImpl({
   onDelete,
   onPhotoTap,
   onAuthorPress,
+  onOpen,
+  ownerReply,
 }: ReviewItemProps) {
+  const { styles, colors } = useThemedStyles(makeStyles);
   const displayName = author?.displayName ?? "Hidden Plate user";
   const username = author?.username;
+  // Replies = the owner's reply (if any) + user comments. The footer always
+  // offers the reply affordance (opens the full review); it shows the count
+  // once there's at least one, and just "Reply" while there are none.
+  const replyCount = review.commentCount + (ownerReply ? 1 : 0);
 
   const handleDeletePress = () => {
     Alert.alert("Delete review?", "This can't be undone.", [
@@ -72,7 +86,16 @@ function ReviewItemImpl({
   };
 
   return (
-    <View style={styles.item}>
+    <Pressable
+      onPress={onOpen ? () => onOpen(review) : undefined}
+      disabled={!onOpen}
+      accessibilityRole={onOpen ? "button" : undefined}
+      accessibilityLabel={onOpen ? "Open review" : undefined}
+      style={({ pressed }) => [
+        styles.item,
+        onOpen && pressed && styles.itemPressed,
+      ]}
+    >
       <View style={styles.headerRow}>
         <Pressable
           style={styles.authorRow}
@@ -181,6 +204,22 @@ function ReviewItemImpl({
         </ScrollView>
       ) : null}
 
+      {ownerReply ? (
+        <View style={styles.ownerReply}>
+          <View style={styles.ownerReplyHead}>
+            <MaterialCommunityIcons
+              name="storefront"
+              size={13}
+              color={colors.primary}
+            />
+            <Text style={styles.ownerReplyLabel}>Owner reply</Text>
+          </View>
+          <Text style={styles.ownerReplyText} numberOfLines={4}>
+            {ownerReply.text}
+          </Text>
+        </View>
+      ) : null}
+
       <View style={styles.footerRow}>
         <Pressable
           onPress={() => onToggleLike(review.id, isLiked)}
@@ -189,18 +228,51 @@ function ReviewItemImpl({
           accessibilityLabel={isLiked ? "Unlike review" : "Like review"}
           style={({ pressed }) => [
             styles.likeButton,
+            isLiked && styles.likeButtonActive,
             pressed && styles.pressed,
             isOwn && styles.likeDisabled,
           ]}
           hitSlop={6}
         >
-          <Text style={[styles.heart, isLiked && styles.heartLiked]}>
-            {isLiked ? "♥" : "♡"}
+          <MaterialCommunityIcons
+            name={isLiked ? "heart" : "heart-outline"}
+            size={18}
+            color={isLiked ? colors.primary : colors.textSecondary}
+          />
+          <Text style={[styles.likeCount, isLiked && styles.likeCountActive]}>
+            {review.likeCount}
           </Text>
-          <Text style={styles.likeCount}>{review.likeCount}</Text>
         </Pressable>
+
+        {onOpen ? (
+          <Pressable
+            onPress={() => onOpen(review)}
+            hitSlop={6}
+            accessibilityRole="button"
+            accessibilityLabel={
+              replyCount > 0
+                ? `View ${replyCount} ${replyCount === 1 ? "reply" : "replies"}`
+                : "Reply to review"
+            }
+            style={({ pressed }) => [
+              styles.repliesButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <MaterialCommunityIcons
+              name="comment-outline"
+              size={17}
+              color={colors.textSecondary}
+            />
+            <Text style={styles.repliesText}>
+              {replyCount > 0
+                ? `${replyCount} ${replyCount === 1 ? "reply" : "replies"}`
+                : "Reply"}
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -229,13 +301,41 @@ function formatTimeAgo(iso: string): string {
 
 // ---------- styles ----------
 
-const styles = StyleSheet.create({
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   item: {
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
     borderBottomWidth: 1,
     borderBottomColor: colors.divider,
     backgroundColor: colors.cardBackground,
+  },
+  itemPressed: { backgroundColor: colors.pageBackground },
+  ownerReply: {
+    marginTop: spacing.sm,
+    padding: spacing.sm + 2,
+    borderRadius: radius.md,
+    backgroundColor: colors.primaryLight,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
+  },
+  ownerReplyHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginBottom: 3,
+  },
+  ownerReplyLabel: {
+    fontFamily: fonts.bold,
+    fontSize: T.size.xs,
+    color: colors.primary,
+  },
+  ownerReplyText: {
+    fontFamily: fonts.regular,
+    fontSize: T.size.sm,
+    color: colors.textPrimary,
+    lineHeight: 19,
   },
   headerRow: {
     flexDirection: "row",
@@ -347,24 +447,38 @@ const styles = StyleSheet.create({
   likeButton: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    marginLeft: -8,
+    gap: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    marginLeft: -10,
+    borderRadius: radius.full,
+  },
+  likeButtonActive: {
+    backgroundColor: colors.primaryLight,
   },
   likeDisabled: {
     opacity: 0.5,
   },
-  heart: {
-    fontSize: 18,
-    color: colors.textSecondary,
-    marginRight: spacing.xs,
-  },
-  heartLiked: {
-    color: colors.primary,
-  },
   likeCount: {
-    fontFamily: fonts.regular,
+    fontFamily: fonts.medium,
     fontSize: T.size.xs,
     color: colors.textSecondary,
   },
-});
+  likeCountActive: {
+    color: colors.primary,
+  },
+  repliesButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: radius.full,
+  },
+  repliesText: {
+    fontFamily: fonts.medium,
+    fontSize: T.size.xs,
+    color: colors.textSecondary,
+  },
+  });
+}

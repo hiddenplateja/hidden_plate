@@ -38,12 +38,14 @@ import {
 } from "@/services/follows";
 import { getSuggestedUsers, searchUsers } from "@/services/users";
 import {
-    colors,
     fonts,
     radius,
+    shadows,
     spacing,
     typographyTokens as T,
 } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 import type { User } from "@/types/user";
 
 const DEBOUNCE_MS = 300;
@@ -66,6 +68,7 @@ interface SearchState {
 export default function SearchUsersScreen() {
   const router = useRouter();
   const { user: me } = useAuth();
+  const { styles, colors } = useThemedStyles(makeStyles);
 
   const [suggested, setSuggested] = useState<SuggestedState>({
     users: [],
@@ -286,7 +289,7 @@ export default function SearchUsersScreen() {
           <MaterialCommunityIcons
             name="magnify"
             size={20}
-            color={colors.textMuted}
+            color={colors.textSecondary}
             style={{ marginRight: spacing.sm }}
           />
           <TextInput
@@ -418,8 +421,10 @@ export default function SearchUsersScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.pageBackground },
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
+  safe: { flex: 1, backgroundColor: colors.background },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -428,7 +433,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     backgroundColor: colors.cardBackground,
     borderBottomWidth: 1,
-    borderBottomColor: colors.divider,
+    borderBottomColor: colors.border,
   },
   backBtn: {
     width: 36,
@@ -446,23 +451,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.screen,
     paddingBottom: spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: colors.divider,
+    borderBottomColor: colors.border,
   },
+  // Elevated white pill — matches the home (index) page search bar.
   searchBar: {
+    height: 52,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: colors.pageBackground,
-    borderRadius: radius.lg,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
+    backgroundColor: colors.cardBackground,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.lg,
     borderWidth: 1,
     borderColor: colors.divider,
+    ...shadows.sm,
   },
   searchInput: {
     flex: 1,
     fontFamily: fonts.regular,
     fontSize: T.size.base,
     color: colors.textPrimary,
+    padding: 0,
   },
   sectionHeader: {
     paddingHorizontal: spacing.screen,
@@ -482,7 +490,7 @@ const styles = StyleSheet.create({
   },
   rowDivider: {
     height: 1,
-    backgroundColor: colors.divider,
+    backgroundColor: colors.border,
     marginLeft: spacing.screen + 48 + spacing.md,
   },
   listContent: {
@@ -527,4 +535,5 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 22,
   },
-});
+  });
+}

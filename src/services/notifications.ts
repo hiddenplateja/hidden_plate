@@ -11,6 +11,7 @@
 import { AppwriteException, Query } from "react-native-appwrite";
 
 import { account, appwriteConfig, databases } from "@/services/appwrite";
+import { getHiddenUserIds } from "@/services/blocks";
 import type {
     AppNotification,
     NotificationData,
@@ -120,13 +121,20 @@ export async function listMyNotifications(
       appwriteConfig.collections.notifications,
       queries,
     );
-    const items = (res.documents as unknown as NotificationDoc[]).map(mapDoc);
-    const lastId = items.length > 0 ? items[items.length - 1].id : null;
+    const raw = (res.documents as unknown as NotificationDoc[]).map(mapDoc);
+
+    // Hide notifications whose actor is blocked (either direction). Pagination
+    // stays anchored on the RAW page (cursor + hasMore) so filtered rows don't
+    // stall paging. Tolerant: empty set on failure → nothing is filtered.
+    const hidden = await getHiddenUserIds();
+    const items = raw.filter((n) => !n.actorId || !hidden.has(n.actorId));
+
+    const lastRawId = raw.length > 0 ? raw[raw.length - 1].id : null;
     return {
       items,
       total: res.total,
-      hasMore: items.length === pageSize,
-      nextCursor: lastId,
+      hasMore: raw.length === pageSize,
+      nextCursor: lastRawId,
     };
   } catch (err) {
     throw toNotificationError(err, "Failed to load notifications.");
@@ -146,16 +154,24 @@ export async function getUnreadCount(): Promise<number> {
   }
 
   try {
-    const res = await databases.listDocuments(
-      appwriteConfig.databaseId,
-      appwriteConfig.collections.notifications,
-      [
-        Query.equal("userId", me.$id),
-        Query.equal("isRead", false),
-        Query.limit(1), // we only need `total`
-      ],
-    );
-    return res.total;
+    // Fetch unread (actorId only) + the block set in parallel, then count the
+    // ones NOT from blocked users — keeps the badge consistent with the feed.
+    // Capped at MAX_RETAIN, which is fine since the bell renders "99+" anyway.
+    const [res, hidden] = await Promise.all([
+      databases.listDocuments(
+        appwriteConfig.databaseId,
+        appwriteConfig.collections.notifications,
+        [
+          Query.equal("userId", me.$id),
+          Query.equal("isRead", false),
+          Query.select(["actorId"]),
+          Query.limit(MAX_RETAIN),
+        ],
+      ),
+      getHiddenUserIds(),
+    ]);
+    const docs = res.documents as unknown as { actorId?: string }[];
+    return docs.filter((d) => !d.actorId || !hidden.has(d.actorId)).length;
   } catch (err) {
     console.warn("[notifications] getUnreadCount failed:", err);
     return 0;

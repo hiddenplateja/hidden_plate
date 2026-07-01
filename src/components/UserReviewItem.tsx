@@ -6,21 +6,22 @@
 //   - UserReviewItem (on profile): shows WHAT was reviewed, hides the user
 //
 // Both share the same Review data — just different rendering for different contexts.
+//
+// Also exports `UserReviewItemSkeleton` — placeholder matching the bordered
+// card layout: thumbnail + name/parish row, then meta row, then 3 comment
+// lines. No footer skeleton — keeps the placeholder light.
 
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { memo } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { Skeleton, SkeletonText } from "@/components/Skeleton";
 import { StarRating } from "@/components/StarRating";
 import { getImagePreviewUrl, getImageViewUrl } from "@/services/storage";
-import {
-    colors,
-    fonts,
-    radius,
-    spacing,
-    typographyTokens as T,
-} from "@/theme/colors";
+import { fonts, radius, spacing, typographyTokens as T } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 import type { Parish, Restaurant } from "@/types/restaurant";
 import type { Review } from "@/types/review";
 
@@ -72,6 +73,7 @@ function UserReviewItemImpl({
   onPress,
   onPhotoTap,
 }: UserReviewItemProps) {
+  const { styles, colors } = useThemedStyles(makeStyles);
   // Restaurant was deleted from platform — render a muted "unavailable" row
   if (!restaurant) {
     return (
@@ -194,7 +196,50 @@ function UserReviewItemImpl({
 
 export const UserReviewItem = memo(UserReviewItemImpl);
 
-const styles = StyleSheet.create({
+// ─── Skeleton sibling ───────────────────────────────────────────────────────
+// Matches the bordered card layout:
+//   - Restaurant header row (48px thumb + name/parish)
+//   - Meta row (stars + time)
+//   - 3 comment text lines
+//   - Footer with like-count placeholder
+// Doesn't show photo thumbs since we don't know if the review has any.
+
+export const UserReviewItemSkeleton = memo(function UserReviewItemSkeleton() {
+  const { styles } = useThemedStyles(makeStyles);
+  return (
+    <View style={styles.card}>
+      {/* Restaurant header row */}
+      <View style={styles.restaurantRow}>
+        <Skeleton width={48} height={48} borderRadius={radius.md} />
+        <View style={styles.restaurantInfo}>
+          <Skeleton width="60%" height={15} borderRadius={4} />
+          <View style={{ height: 6 }} />
+          <Skeleton width="40%" height={12} borderRadius={4} />
+        </View>
+      </View>
+
+      {/* Meta row — stars + dot + time */}
+      <View style={[styles.metaRow, { gap: spacing.xs }]}>
+        <Skeleton width={80} height={12} borderRadius={4} />
+        <Skeleton width={50} height={10} borderRadius={4} />
+      </View>
+
+      {/* Comment text */}
+      <View style={{ marginBottom: spacing.sm }}>
+        <SkeletonText lines={3} lineHeight={14} gap={8} lastLineWidthPct={50} />
+      </View>
+
+      {/* Footer */}
+      <View style={styles.footer}>
+        <Skeleton width={70} height={12} borderRadius={4} />
+      </View>
+    </View>
+  );
+});
+
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   card: {
     backgroundColor: colors.cardBackground,
     marginHorizontal: spacing.screen,
@@ -306,4 +351,5 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.textSecondary,
   },
-});
+  });
+}

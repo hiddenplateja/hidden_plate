@@ -1,0 +1,20 @@
+# Local secrets for `wrangler dev` ONLY. Copy to `.dev.vars` and fill in.
+# `.dev.vars` is gitignored. For PRODUCTION, set these with:
+#   npx wrangler secret put APPWRITE_API_KEY
+#   npx wrangler secret put REVENUECAT_WEBHOOK_AUTH
+
+# Appwrite server API key — console → project → Overview → Integrations →
+# API Keys → Create, with scopes: documents.read + documents.write +
+# users.read + users.write (documents.* for restaurant/OTP writes, users.* for
+# the email-verification flow). NOT databases.* — that only manages schema.
+APPWRITE_API_KEY=""
+
+# Shared secret. Put the SAME value in RevenueCat → Project → Integrations →
+# Webhooks → "Authorization header value". The worker rejects any webhook whose
+# Authorization header doesn't match this. Use a long random string.
+REVENUECAT_WEBHOOK_AUTH=""
+
+# Resend API key (https://resend.com → API Keys). Used to send the email
+# verification OTP. The sender domain (RESEND_FROM in wrangler.jsonc) must be
+# verified in Resend.
+RESEND_API_KEY=""

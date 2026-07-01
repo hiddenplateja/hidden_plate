@@ -4,9 +4,19 @@
 // Two variants:
 //   variant="centered" — your own profile tab. Centered avatar with an edit
 //     pencil overlay, centered name/handle/bio, then a minimal stats row.
-//     No follow button (it's your profile).
-//   variant="default" — viewing another user. Left-aligned avatar with Follow
-//     button on the right, then name/handle/bio, then the same stats row.
+//     No follow button (it's your profile). No separate "Edit Profile" pill
+//     either — the pencil overlay is the single edit affordance.
+//   variant="default" — viewing another user. Left-aligned avatar with a ⋯
+//     overflow + Follow button on the right, then name/handle/bio, then the
+//     same stats row.
+//
+// Block/Unblock (default variant, other users only):
+//   - A ⋯ button next to Follow opens a bottom action sheet with
+//     "Block @user" (destructive) or "Unblock @user".
+//   - When blocked, the Follow button is replaced by a muted "Blocked" pill
+//     (state indicator); the ⋯ menu offers Unblock.
+//   - State + the actual block/unblock call are owned by ProfileView and
+//     passed in via isBlocked / onToggleBlock, mirroring the follow wiring.
 //
 // Stats row design notes:
 //   - No bordered card, no background fill — just open whitespace
@@ -17,9 +27,11 @@
 // This style matches the rest of the white-blended UI on Community/Saved.
 
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
+  Modal,
   Pressable,
   StyleSheet,
   Text,
@@ -28,14 +40,17 @@ import {
 
 import { Avatar } from "@/components/Avatar";
 import {
-  colors,
   fonts,
   radius,
   shadows,
   spacing,
   typographyTokens as T,
 } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 import type { User } from "@/types/user";
+import { badgeToneColor } from "@/utils/badgeTone";
+import { getReviewerBadges } from "@/utils/reviewerBadges";
 
 interface ProfileStats {
   reviewCount: number;
@@ -59,6 +74,10 @@ interface ProfileHeaderProps {
   variant?: Variant;
   onEditPress?: () => void;
   onToggleFollow?: () => Promise<void>;
+  /** Whether the current user has blocked this profile's user. */
+  isBlocked?: boolean;
+  /** Block/unblock toggle — owned by ProfileView. Absent on own profile. */
+  onToggleBlock?: () => Promise<void>;
   onFollowersPress?: () => void;
   onFollowingPress?: () => void;
 }
@@ -71,10 +90,19 @@ export function ProfileHeader({
   variant = "default",
   onEditPress,
   onToggleFollow,
+  isBlocked = false,
+  onToggleBlock,
   onFollowersPress,
   onFollowingPress,
 }: ProfileHeaderProps) {
   const [busy, setBusy] = useState(false);
+  const [blockBusy, setBlockBusy] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const { styles, colors } = useThemedStyles(makeSharedStyles);
+  const centeredContainer = useThemedStyles(makeCenteredContainer).styles;
+  const centeredStyles = useThemedStyles(makeCenteredStyles).styles;
+  const defaultStyles = useThemedStyles(makeDefaultStyles).styles;
+  const sheetStyles = useThemedStyles(makeSheetStyles).styles;
 
   const handleFollowPress = useCallback(async () => {
     if (busy || !onToggleFollow) return;
@@ -86,16 +114,28 @@ export function ProfileHeader({
     }
   }, [busy, onToggleFollow]);
 
+  const handleBlockPress = useCallback(async () => {
+    if (blockBusy || !onToggleBlock) return;
+    setMenuOpen(false);
+    setBlockBusy(true);
+    try {
+      await onToggleBlock();
+    } finally {
+      setBlockBusy(false);
+    }
+  }, [blockBusy, onToggleBlock]);
+
   if (variant === "centered") {
     return (
-      <View style={styles.container}>
-        {/* Centered avatar with edit pencil overlay */}
+      <View style={centeredContainer.container}>
+        {/* Centered avatar with edit pencil overlay — the pencil is the
+            single edit entry point on own profile. */}
         <View style={centeredStyles.avatarWrap}>
           <Avatar
             fileId={user.avatarUrl}
             displayName={user.displayName}
             userId={user.id}
-            size={96}
+            size={80}
           />
           {isOwn && onEditPress ? (
             <Pressable
@@ -107,7 +147,7 @@ export function ProfileHeader({
             >
               <MaterialCommunityIcons
                 name="pencil"
-                size={14}
+                size={13}
                 color={colors.textInverse}
               />
             </Pressable>
@@ -125,34 +165,26 @@ export function ProfileHeader({
           <Text style={centeredStyles.bioPlaceholder}>No bio yet.</Text>
         ) : null}
 
-        {/* Edit Profile pill — only on own profile, in addition to the pencil */}
-        {isOwn && onEditPress ? (
-          <Pressable
-            onPress={onEditPress}
-            style={({ pressed }) => [
-              centeredStyles.editPill,
-              pressed && { opacity: 0.7 },
-            ]}
-            accessibilityRole="button"
-            accessibilityLabel="Edit profile"
-          >
-            <Text style={centeredStyles.editPillText}>Edit Profile</Text>
-          </Pressable>
-        ) : null}
-
         <StatsRow
           stats={stats}
           follow={follow}
+          marginTop={spacing.md}
           onFollowersPress={onFollowersPress}
           onFollowingPress={onFollowingPress}
         />
 
         {stats.reviewCount > 0 ? <SecondaryLine stats={stats} /> : null}
+
+        <BadgesRow stats={stats} userId={user.id} />
       </View>
     );
   }
 
   // ---------- Default variant (viewing another user) ----------
+  const showFollow = !isOwn && !!onToggleFollow && !isBlocked;
+  const showBlockedPill = !isOwn && !!onToggleBlock && isBlocked;
+  const showMenu = !isOwn && !!onToggleBlock;
+
   return (
     <View style={styles.container}>
       <View style={defaultStyles.avatarRow}>
@@ -162,53 +194,86 @@ export function ProfileHeader({
           userId={user.id}
           size={88}
         />
-        {!isOwn && onToggleFollow ? (
-          <Pressable
-            onPress={handleFollowPress}
-            disabled={busy}
-            style={({ pressed }) => [
-              follow.isFollowing
-                ? defaultStyles.followingButton
-                : defaultStyles.followButton,
-              pressed && defaultStyles.pressed,
-            ]}
-            accessibilityRole="button"
-            accessibilityLabel={
-              follow.isFollowing
-                ? `Unfollow ${user.displayName}`
-                : `Follow ${user.displayName}`
-            }
-          >
-            {busy ? (
-              <ActivityIndicator
-                size="small"
-                color={follow.isFollowing ? colors.primary : colors.textInverse}
-              />
-            ) : (
-              <Text
-                style={
-                  follow.isFollowing
-                    ? defaultStyles.followingButtonText
-                    : defaultStyles.followButtonText
-                }
-              >
-                {follow.isFollowing ? "Following" : "Follow"}
-              </Text>
-            )}
-          </Pressable>
-        ) : isOwn && onEditPress ? (
-          <Pressable
-            onPress={onEditPress}
-            style={({ pressed }) => [
-              defaultStyles.editButton,
-              pressed && defaultStyles.pressed,
-            ]}
-            accessibilityRole="button"
-            accessibilityLabel="Edit profile"
-          >
-            <Text style={defaultStyles.editButtonText}>Edit Profile</Text>
-          </Pressable>
-        ) : null}
+
+        <View style={defaultStyles.actions}>
+          {showMenu ? (
+            <Pressable
+              onPress={() => setMenuOpen(true)}
+              disabled={blockBusy}
+              hitSlop={8}
+              style={({ pressed }) => [
+                defaultStyles.menuBtn,
+                pressed && defaultStyles.pressed,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="More options"
+            >
+              {blockBusy ? (
+                <ActivityIndicator size="small" color={colors.textPrimary} />
+              ) : (
+                <MaterialCommunityIcons
+                  name="dots-horizontal"
+                  size={22}
+                  color={colors.textPrimary}
+                />
+              )}
+            </Pressable>
+          ) : null}
+
+          {showFollow ? (
+            <Pressable
+              onPress={handleFollowPress}
+              disabled={busy}
+              style={({ pressed }) => [
+                follow.isFollowing
+                  ? defaultStyles.followingButton
+                  : defaultStyles.followButton,
+                pressed && defaultStyles.pressed,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={
+                follow.isFollowing
+                  ? `Unfollow ${user.displayName}`
+                  : `Follow ${user.displayName}`
+              }
+            >
+              {busy ? (
+                <ActivityIndicator
+                  size="small"
+                  color={
+                    follow.isFollowing ? colors.primary : colors.textInverse
+                  }
+                />
+              ) : (
+                <Text
+                  style={
+                    follow.isFollowing
+                      ? defaultStyles.followingButtonText
+                      : defaultStyles.followButtonText
+                  }
+                >
+                  {follow.isFollowing ? "Following" : "Follow"}
+                </Text>
+              )}
+            </Pressable>
+          ) : showBlockedPill ? (
+            <View style={defaultStyles.blockedPill}>
+              <Text style={defaultStyles.blockedPillText}>Blocked</Text>
+            </View>
+          ) : isOwn && onEditPress ? (
+            <Pressable
+              onPress={onEditPress}
+              style={({ pressed }) => [
+                defaultStyles.editButton,
+                pressed && defaultStyles.pressed,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Edit profile"
+            >
+              <Text style={defaultStyles.editButtonText}>Edit Profile</Text>
+            </Pressable>
+          ) : null}
+        </View>
       </View>
 
       <Text style={defaultStyles.displayName} numberOfLines={1}>
@@ -226,6 +291,70 @@ export function ProfileHeader({
       />
 
       {stats.reviewCount > 0 ? <SecondaryLine stats={stats} /> : null}
+
+      <BadgesRow stats={stats} userId={user.id} />
+
+      {/* Block/Unblock action sheet */}
+      {showMenu ? (
+        <Modal
+          visible={menuOpen}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setMenuOpen(false)}
+        >
+          <Pressable
+            style={sheetStyles.overlay}
+            onPress={() => setMenuOpen(false)}
+          >
+            {/* Inner Pressable captures taps so they don't close the sheet. */}
+            <Pressable style={sheetStyles.sheet} onPress={() => {}}>
+              <View style={sheetStyles.handle} />
+              <Text style={sheetStyles.title} numberOfLines={1}>
+                @{user.username}
+              </Text>
+              <View style={sheetStyles.divider} />
+
+              <Pressable
+                onPress={handleBlockPress}
+                style={({ pressed }) => [
+                  sheetStyles.action,
+                  pressed && defaultStyles.pressed,
+                ]}
+                accessibilityRole="button"
+              >
+                <MaterialCommunityIcons
+                  name={isBlocked ? "account-check-outline" : "block-helper"}
+                  size={20}
+                  color={isBlocked ? colors.textPrimary : colors.error}
+                />
+                <Text
+                  style={[
+                    sheetStyles.actionText,
+                    !isBlocked && sheetStyles.actionTextDestructive,
+                  ]}
+                >
+                  {isBlocked
+                    ? `Unblock @${user.username}`
+                    : `Block @${user.username}`}
+                </Text>
+              </Pressable>
+
+              <View style={sheetStyles.divider} />
+
+              <Pressable
+                onPress={() => setMenuOpen(false)}
+                style={({ pressed }) => [
+                  sheetStyles.action,
+                  pressed && defaultStyles.pressed,
+                ]}
+                accessibilityRole="button"
+              >
+                <Text style={sheetStyles.cancelText}>Cancel</Text>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      ) : null}
     </View>
   );
 }
@@ -235,6 +364,9 @@ export function ProfileHeader({
 interface StatsRowProps {
   stats: ProfileStats;
   follow: FollowState;
+  /** Override the default top margin (defaults to spacing.lg). The centered
+   *  variant overrides this to tighten its layout. */
+  marginTop?: number;
   onFollowersPress?: () => void;
   onFollowingPress?: () => void;
 }
@@ -242,11 +374,13 @@ interface StatsRowProps {
 function StatsRow({
   stats,
   follow,
+  marginTop,
   onFollowersPress,
   onFollowingPress,
 }: StatsRowProps) {
+  const { styles } = useThemedStyles(makeSharedStyles);
   return (
-    <View style={styles.statsRow}>
+    <View style={[styles.statsRow, marginTop != null && { marginTop }]}>
       <StatBlock
         label={stats.reviewCount === 1 ? "Review" : "Reviews"}
         value={formatCount(stats.reviewCount)}
@@ -268,6 +402,7 @@ function StatsRow({
 }
 
 function SecondaryLine({ stats }: { stats: ProfileStats }) {
+  const { styles, colors } = useThemedStyles(makeSharedStyles);
   return (
     <View style={styles.secondaryStats}>
       <MaterialCommunityIcons name="star" size={13} color={colors.star} />
@@ -283,6 +418,59 @@ function SecondaryLine({ stats }: { stats: ProfileStats }) {
   );
 }
 
+// Reputation badges earned from review volume + parish coverage, shown as
+// colored "medal" cards (icon + tier name + what earned it). Tapping a badge
+// opens the full tier guide — which also shows your progress to the next tier.
+// Renders nothing until at least one badge is earned.
+function BadgesRow({ stats, userId }: { stats: ProfileStats; userId: string }) {
+  const { styles, colors } = useThemedStyles(makeSharedStyles);
+  const router = useRouter();
+  const badges = getReviewerBadges(stats);
+  if (badges.length === 0) return null;
+
+  const openGuide = () =>
+    router.push({ pathname: "/badges", params: { userId } });
+
+  return (
+    <View style={styles.badgesSection}>
+      <View style={styles.badgesRow}>
+        {badges.map((b) => {
+          const tc = badgeToneColor(b.tone, colors);
+          return (
+            <Pressable
+              key={b.id}
+              onPress={openGuide}
+              accessibilityRole="button"
+              accessibilityLabel={`${b.label}, ${b.requirement}. See how badges work`}
+              style={({ pressed }) => [
+                styles.badge,
+                { backgroundColor: tc + "14", borderColor: tc + "33" },
+                pressed && styles.badgePressed,
+              ]}
+            >
+              <View style={[styles.badgeMedal, { backgroundColor: tc }]}>
+                <MaterialCommunityIcons
+                  name={b.icon as keyof typeof MaterialCommunityIcons.glyphMap}
+                  size={16}
+                  color={colors.white}
+                />
+              </View>
+              <View style={styles.badgeTextWrap}>
+                <Text style={styles.badgeLabel} numberOfLines={1}>
+                  {b.label}
+                </Text>
+                <Text style={styles.badgeReq} numberOfLines={1}>
+                  {b.requirement}
+                </Text>
+              </View>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
 interface StatBlockProps {
   label: string;
   value: string;
@@ -290,6 +478,7 @@ interface StatBlockProps {
 }
 
 function StatBlock({ label, value, onPress }: StatBlockProps) {
+  const { styles } = useThemedStyles(makeSharedStyles);
   const content = (
     <>
       <Text style={styles.statValue}>{value}</Text>
@@ -322,7 +511,9 @@ function formatCount(n: number): string {
 
 // ---------- Shared styles ----------
 
-const styles = StyleSheet.create({
+function makeSharedStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   container: {
     backgroundColor: colors.cardBackground,
     paddingHorizontal: spacing.xl,
@@ -379,25 +570,87 @@ const styles = StyleSheet.create({
     fontSize: T.size.xs,
     marginHorizontal: spacing.xs / 2,
   },
-});
+  badgesSection: {
+    marginTop: spacing.md,
+    gap: spacing.sm,
+  },
+  badgesRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    gap: spacing.sm,
+  },
+  // Medal card: colored icon disc + tier name + the threshold that earned it.
+  badge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    paddingVertical: 5,
+    paddingLeft: 5,
+    paddingRight: spacing.md,
+  },
+  badgePressed: { opacity: 0.6 },
+  badgeMedal: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  badgeTextWrap: {
+    justifyContent: "center",
+  },
+  badgeLabel: {
+    fontFamily: fonts.bold,
+    fontSize: T.size.sm,
+    color: colors.textPrimary,
+    lineHeight: T.size.sm * 1.25,
+  },
+  badgeReq: {
+    fontFamily: fonts.medium,
+    fontSize: T.size.xs,
+    color: colors.textMuted,
+    lineHeight: T.size.xs * 1.25,
+  },
+  });
+}
+
+// ---------- Centered variant container (tighter than the shared one) ----------
+// Own-profile gets less bottom padding since the user already knows what
+// their profile says — no need to give it a stage.
+function makeCenteredContainer(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
+  container: {
+    backgroundColor: colors.cardBackground,
+    paddingHorizontal: spacing.xl,
+    // Clear gap before the content-tab strip so the stats never crowd it.
+    paddingBottom: spacing.lg,
+  },
+  });
+}
 
 // ---------- Centered variant styles ----------
 
-const centeredStyles = StyleSheet.create({
+function makeCenteredStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   avatarWrap: {
     alignSelf: "center",
-    marginTop: spacing.sm,
-    marginBottom: spacing.lg,
+    marginTop: 0,
+    marginBottom: spacing.md,
     position: "relative",
     ...shadows.md,
   },
   editBadge: {
     position: "absolute",
-    bottom: 2,
-    right: 2,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    bottom: 0,
+    right: 0,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     backgroundColor: colors.primary,
     alignItems: "center",
     justifyContent: "center",
@@ -406,15 +659,16 @@ const centeredStyles = StyleSheet.create({
     ...shadows.sm,
   },
   displayName: {
+    // Stepped down from xxl → xl: still authoritative, less imposing
     fontFamily: fonts.black,
-    fontSize: T.size.xxl,
+    fontSize: T.size.xl,
     color: colors.textPrimary,
     textAlign: "center",
     letterSpacing: T.tracking.tight,
   },
   username: {
     fontFamily: fonts.medium,
-    fontSize: T.size.base,
+    fontSize: T.size.sm,
     color: colors.textMuted,
     textAlign: "center",
     marginTop: 2,
@@ -424,9 +678,9 @@ const centeredStyles = StyleSheet.create({
     fontSize: T.size.base,
     color: colors.textPrimary,
     textAlign: "center",
-    lineHeight: 22,
-    marginTop: spacing.md,
-    paddingHorizontal: spacing.lg,
+    lineHeight: 21,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.md,
   },
   bioPlaceholder: {
     fontFamily: fonts.regular,
@@ -436,33 +690,36 @@ const centeredStyles = StyleSheet.create({
     textAlign: "center",
     marginTop: spacing.sm,
   },
-  // Subtle pill button — outlined, sits centered below the bio
-  editPill: {
-    alignSelf: "center",
-    marginTop: spacing.md,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.sm + 1,
-    borderRadius: radius.full,
-    borderWidth: 1,
-    borderColor: colors.divider,
-    backgroundColor: colors.cardBackground,
-  },
-  editPillText: {
-    fontFamily: fonts.bold,
-    fontSize: T.size.sm,
-    color: colors.textPrimary,
-  },
-});
+  });
+}
 
 // ---------- Default variant styles ----------
 
-const defaultStyles = StyleSheet.create({
+function makeDefaultStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   avatarRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: spacing.md,
     paddingTop: spacing.lg,
+  },
+  // Right-hand action cluster: ⋯ menu + Follow/Blocked/Edit
+  actions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  menuBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.full,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.pageBackground,
+    borderWidth: 1,
+    borderColor: colors.divider,
   },
   editButton: {
     paddingHorizontal: spacing.md,
@@ -507,6 +764,23 @@ const defaultStyles = StyleSheet.create({
     fontSize: T.size.sm,
     color: colors.primary,
   },
+  // Muted state pill shown in place of Follow when this user is blocked.
+  blockedPill: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm + 2,
+    borderRadius: radius.full,
+    backgroundColor: colors.pageBackground,
+    borderWidth: 1,
+    borderColor: colors.divider,
+    minWidth: 110,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  blockedPillText: {
+    fontFamily: fonts.bold,
+    fontSize: T.size.sm,
+    color: colors.textMuted,
+  },
   pressed: { opacity: 0.7 },
   displayName: {
     fontFamily: fonts.black,
@@ -528,4 +802,65 @@ const defaultStyles = StyleSheet.create({
     lineHeight: 22,
     marginBottom: spacing.lg,
   },
-});
+  });
+}
+
+// ---------- Action-sheet styles ----------
+
+function makeSheetStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "flex-end",
+  },
+  sheet: {
+    backgroundColor: colors.cardBackground,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    paddingBottom: spacing.xl,
+    paddingTop: spacing.sm,
+  },
+  handle: {
+    alignSelf: "center",
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.divider,
+    marginVertical: spacing.sm,
+  },
+  title: {
+    fontFamily: fonts.medium,
+    fontSize: T.size.sm,
+    color: colors.textMuted,
+    textAlign: "center",
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.lg,
+  },
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.divider,
+  },
+  action: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    paddingVertical: spacing.lg,
+  },
+  actionText: {
+    fontFamily: fonts.bold,
+    fontSize: T.size.base,
+    color: colors.textPrimary,
+  },
+  actionTextDestructive: {
+    color: colors.error,
+  },
+  cancelText: {
+    fontFamily: fonts.medium,
+    fontSize: T.size.base,
+    color: colors.textSecondary,
+  },
+  });
+}

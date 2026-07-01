@@ -2,7 +2,9 @@
 // Reusable small restaurant card — used in horizontal scrolls on home
 // ("Near You", "New Restaurants") and anywhere else compact cards fit.
 //
-// Design: image on top, info on bottom (white card background).
+// Design: borderless / "Uber Eats" style — no card surface, border, or
+// shadow. Just a rounded image with the info stacked directly on the page
+// background below it (name → rating → cuisine → location).
 // Stacked rows: name → rating (or "New listing") → cuisine line → location.
 // Cuisine line format: "<first cuisine> • <up to 2 categories>"
 // e.g. "Jamaican • Jerk • BBQ"
@@ -14,31 +16,36 @@
 //
 // Distinct from RestaurantImageCard (full-bleed image with overlay) and
 // RestaurantCard (older Saved-tab style).
+//
+// Also exports `RestaurantSmallCardSkeleton` — the loading placeholder
+// with identical layout dimensions. Use in horizontal scrolls while
+// fetching to avoid layout shift when real cards mount.
 
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { memo, useCallback } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, {
-    useAnimatedStyle,
-    useSharedValue,
-    withSpring,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
 } from "react-native-reanimated";
 
+import { OpenStatusBadge } from "@/components/OpenStatusBadge";
+import { RestaurantImagePlaceholder } from "@/components/RestaurantImagePlaceholder";
+import { Skeleton } from "@/components/Skeleton";
 import { getImagePreviewUrl } from "@/services/storage";
 import {
-    colors,
-    fonts,
-    radius,
-    shadows,
-    spacing,
-    typographyTokens as T,
+  fonts,
+  radius,
+  shadows,
+  spacing,
+  typographyTokens as T,
 } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 import type { Restaurant } from "@/types/restaurant";
 import { getCuisineLine, getLocationLine } from "@/utils/restaurantDisplay";
-
-const STAR_COLOR =
-  (colors as unknown as Record<string, string>).star ?? "#F4A523";
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -69,6 +76,8 @@ export const RestaurantSmallCard = memo(function RestaurantSmallCard({
   hideDistance,
   width = 180,
 }: RestaurantSmallCardProps) {
+  const { styles, colors } = useThemedStyles(makeStyles);
+  const STAR_COLOR = colors.star;
   const scale = useSharedValue(1);
   const animStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
@@ -95,28 +104,24 @@ export const RestaurantSmallCard = memo(function RestaurantSmallCard({
       onPressOut={() => {
         scale.value = withSpring(1, { damping: 15, stiffness: 350 });
       }}
-      style={[styles.card, { width }, animStyle]}
+      style={[{ width }, animStyle]}
       accessibilityRole="button"
       accessibilityLabel={`View ${restaurant.name}`}
     >
       <View style={styles.imageWrap}>
+        {/* Monogram tile behind the image: a lazy-loading or missing photo
+            shows a per-restaurant initial, never a bare grey rectangle. */}
+        <RestaurantImagePlaceholder name={restaurant.name} fontSize={44} />
         {url ? (
           <Image
             source={{ uri: url }}
-            style={styles.image}
+            style={StyleSheet.absoluteFill}
             contentFit="cover"
-            transition={250}
+            transition={200}
             cachePolicy="memory-disk"
+            recyclingKey={restaurant.id}
           />
-        ) : (
-          <View style={[styles.image, styles.placeholder]}>
-            <MaterialCommunityIcons
-              name="silverware-fork-knife"
-              size={28}
-              color={colors.border}
-            />
-          </View>
-        )}
+        ) : null}
 
         {showDistance ? (
           <View style={styles.distanceBadge}>
@@ -149,6 +154,8 @@ export const RestaurantSmallCard = memo(function RestaurantSmallCard({
           </Text>
         )}
 
+        <OpenStatusBadge hours={restaurant.openingHours} variant="compact" />
+
         {cuisineLine ? (
           <Text style={styles.cuisineText} numberOfLines={1}>
             {cuisineLine}
@@ -165,27 +172,53 @@ export const RestaurantSmallCard = memo(function RestaurantSmallCard({
   );
 });
 
-const styles = StyleSheet.create({
-  card: {
-    backgroundColor: colors.cardBackground,
-    borderRadius: radius.xl,
-    ...shadows.sm,
+// ─── Skeleton sibling ───────────────────────────────────────────────────────
+// Mirrors RestaurantSmallCard's layout exactly so swapping it for real
+// content causes zero layout shift. Image area: 136px tall. Content:
+// 4 stacked text rows (name, rating, cuisine, location).
+
+interface RestaurantSmallCardSkeletonProps {
+  /** Match the real card width — defaults to 180 like RestaurantSmallCard */
+  width?: number;
+}
+
+export const RestaurantSmallCardSkeleton = memo(
+  function RestaurantSmallCardSkeleton({
+    width = 180,
+  }: RestaurantSmallCardSkeletonProps) {
+    const { styles } = useThemedStyles(makeStyles);
+    return (
+      <View style={{ width }}>
+        {/* Image area */}
+        <Skeleton width="100%" height={136} borderRadius={radius.md} />
+
+        {/* Content rows */}
+        <View style={styles.content}>
+          {/* Name */}
+          <Skeleton width="80%" height={15} borderRadius={4} />
+          {/* Rating */}
+          <Skeleton width="40%" height={12} borderRadius={4} />
+          {/* Cuisine line */}
+          <Skeleton width="70%" height={12} borderRadius={4} />
+          {/* Location */}
+          <Skeleton width="55%" height={10} borderRadius={4} />
+        </View>
+      </View>
+    );
   },
+);
+
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
+  // Borderless tile: the rounded image is the only "contained" element —
+  // no wrapper background, border, or shadow.
   imageWrap: {
     width: "100%",
-    height: 120,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
+    height: 136,
+    borderRadius: radius.md,
     overflow: "hidden",
     backgroundColor: colors.pageBackground,
-  },
-  image: {
-    width: "100%",
-    height: "100%",
-  },
-  placeholder: {
-    alignItems: "center",
-    justifyContent: "center",
   },
   distanceBadge: {
     position: "absolute",
@@ -193,7 +226,7 @@ const styles = StyleSheet.create({
     left: spacing.sm,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.94)",
+    backgroundColor: colors.cardBackground,
     borderRadius: radius.full,
     paddingHorizontal: spacing.sm,
     paddingVertical: 3,
@@ -206,10 +239,9 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
   },
   content: {
-    paddingHorizontal: spacing.sm,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.md,
-    gap: 4,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xs,
+    gap: 3,
   },
   name: {
     fontFamily: fonts.bold,
@@ -248,4 +280,5 @@ const styles = StyleSheet.create({
     fontSize: T.size.xs,
     color: colors.textMuted,
   },
-});
+  });
+}

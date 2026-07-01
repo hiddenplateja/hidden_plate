@@ -25,6 +25,7 @@ interface UserDoc {
   displayName: string;
   avatarUrl?: string | null;
   bio?: string | null;
+  isBanned?: boolean;
 }
 
 function mapDoc(doc: UserDoc): User {
@@ -37,6 +38,7 @@ function mapDoc(doc: UserDoc): User {
     bio: doc.bio ?? null,
     createdAt: doc.$createdAt,
     emailVerified: undefined,
+    isBanned: doc.isBanned ?? false,
   };
 }
 
@@ -85,6 +87,76 @@ export async function getUserById(userId: string): Promise<User | null> {
   }
 }
 
+// ─── Admin ───────────────────────────────────────────────────────────────────
+
+/** Paginated browse of all users, newest first. Admin-only. */
+export async function listUsers(
+  opts: { cursor?: string | null; pageSize?: number } = {},
+): Promise<{ items: User[]; nextCursor: string | null; hasMore: boolean }> {
+  const { cursor, pageSize = 30 } = opts;
+  const queries: string[] = [
+    Query.orderDesc("$createdAt"),
+    Query.limit(pageSize),
+  ];
+  if (cursor) queries.push(Query.cursorAfter(cursor));
+  try {
+    const res = await databases.listDocuments(
+      appwriteConfig.databaseId,
+      appwriteConfig.collections.users,
+      queries,
+    );
+    const docs = res.documents as unknown as UserDoc[];
+    const items = docs.map(mapDoc);
+    const lastDoc = docs[docs.length - 1];
+    return {
+      items,
+      nextCursor: lastDoc?.$id ?? null,
+      hasMore: items.length === pageSize,
+    };
+  } catch {
+    return { items: [], nextCursor: null, hasMore: false };
+  }
+}
+
+/**
+ * Ban / unban a user (sets the `isBanned` flag on their profile doc).
+ * Resolves the document id from the account userId first. Requires the admins
+ * team to have UPDATE on the users collection + an `isBanned` attribute.
+ */
+export async function setUserBanned(
+  userId: string,
+  banned: boolean,
+): Promise<void> {
+  let docId: string;
+  try {
+    const res = await databases.listDocuments(
+      appwriteConfig.databaseId,
+      appwriteConfig.collections.users,
+      [Query.equal("userId", userId), Query.limit(1)],
+    );
+    const doc = res.documents[0];
+    if (!doc) throw new UserError("User not found.");
+    docId = doc.$id;
+  } catch (err) {
+    if (err instanceof UserError) throw err;
+    throw new UserError("Couldn't find that user.");
+  }
+  try {
+    await databases.updateDocument(
+      appwriteConfig.databaseId,
+      appwriteConfig.collections.users,
+      docId,
+      { isBanned: banned },
+    );
+  } catch (err) {
+    throw new UserError(
+      err instanceof AppwriteException
+        ? err.message
+        : "Couldn't update the user.",
+    );
+  }
+}
+
 /**
  * Update the current user's profile.
  * Updates the users-collection document, NOT the Appwrite Account.
@@ -122,6 +194,25 @@ export async function updateMyProfile(
   if (input.displayName !== undefined) updates.displayName = input.displayName;
   if (input.bio !== undefined) updates.bio = input.bio;
   if (input.avatarUrl !== undefined) updates.avatarUrl = input.avatarUrl;
+
+  // Username change: only when it actually differs, and the new handle must be
+  // free (case-insensitive). The unique index on `username` is the real
+  // backstop; this check just gives a friendly error before the write.
+  if (input.username !== undefined) {
+    const nextUsername = input.username.trim().toLowerCase();
+    const currentUsername = (profileDoc as unknown as UserDoc).username;
+    if (nextUsername && nextUsername !== currentUsername) {
+      const taken = await databases.listDocuments(
+        appwriteConfig.databaseId,
+        appwriteConfig.collections.users,
+        [Query.equal("username", nextUsername), Query.limit(1)],
+      );
+      if (taken.total > 0) {
+        throw new UserError("That username is already taken.");
+      }
+      updates.username = nextUsername;
+    }
+  }
 
   if (Object.keys(updates).length === 0) {
     return mapDoc(profileDoc as unknown as UserDoc);
@@ -162,6 +253,17 @@ export function validateDisplayName(value: string): string | null {
   if (!trimmed) return "Display name is required";
   if (trimmed.length < 2) return "At least 2 characters";
   if (trimmed.length > 50) return "At most 50 characters";
+  return null;
+}
+
+const USERNAME_RE = /^[a-z0-9_]{3,20}$/;
+
+export function validateUsername(value: string): string | null {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) return "Username is required";
+  if (!USERNAME_RE.test(trimmed)) {
+    return "3–20 chars: lowercase letters, numbers, underscore";
+  }
   return null;
 }
 

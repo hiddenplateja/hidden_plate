@@ -18,7 +18,9 @@ import {
     type ViewStyle,
 } from "react-native";
 
-import { colors, radius, spacing, typography } from "@/theme/colors";
+import { fonts, radius, spacing, typographyTokens as T } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 
 type Variant = "primary" | "secondary" | "outline" | "ghost";
 
@@ -45,6 +47,7 @@ export function Button({
   ...rest
 }: ButtonProps) {
   const isDisabled = disabled || loading;
+  const { styles, colors } = useThemedStyles(makeStyles);
 
   return (
     <Pressable
@@ -78,7 +81,9 @@ export function Button({
   );
 }
 
-const styles = StyleSheet.create({
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   base: {
     height: 52,
     borderRadius: radius.md,
@@ -98,7 +103,9 @@ const styles = StyleSheet.create({
     marginRight: spacing.sm,
   },
   label: {
-    ...typography.button,
+    fontFamily: fonts.bold,
+    fontSize: 16,
+    letterSpacing: T.tracking.snug,
   },
 
   // Variants
@@ -138,4 +145,5 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: 0.85,
   },
-});
+  });
+}

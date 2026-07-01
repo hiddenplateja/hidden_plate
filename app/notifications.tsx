@@ -15,12 +15,12 @@
 
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
     ActivityIndicator,
-    FlatList,
     Pressable,
     RefreshControl,
+    SectionList,
     StyleSheet,
     Text,
     View,
@@ -29,17 +29,46 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { NotificationItem } from "@/components/NotificationItem";
 import { useNotifications } from "@/hooks/useNotifications";
-import {
-    colors,
-    fonts,
-    radius,
-    spacing,
-    typographyTokens as T,
-} from "@/theme/colors";
+import { getUsersByIds } from "@/services/users";
+import { fonts, radius, spacing, typographyTokens as T } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 import type { AppNotification } from "@/types/notification";
+import type { User } from "@/types/user";
+
+// Group notifications into Today / This week / Earlier buckets.
+const SECTION_ORDER = ["Today", "This week", "Earlier"] as const;
+
+function sectionFor(iso: string): (typeof SECTION_ORDER)[number] {
+  const now = new Date();
+  const startOfToday = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  ).getTime();
+  const t = new Date(iso).getTime();
+  if (t >= startOfToday) return "Today";
+  if (t >= startOfToday - 6 * 86400000) return "This week";
+  return "Earlier";
+}
+
+function buildSections(
+  items: AppNotification[],
+): { title: string; data: AppNotification[] }[] {
+  const buckets: Record<string, AppNotification[]> = {};
+  for (const n of items) {
+    const key = sectionFor(n.createdAt);
+    (buckets[key] ??= []).push(n);
+  }
+  return SECTION_ORDER.filter((k) => buckets[k]?.length).map((k) => ({
+    title: k,
+    data: buckets[k],
+  }));
+}
 
 export default function NotificationsScreen() {
   const router = useRouter();
+  const { styles, colors } = useThemedStyles(makeStyles);
   const {
     notifications,
     unreadCount,
@@ -52,6 +81,26 @@ export default function NotificationsScreen() {
     removeNotification,
   } = useNotifications();
   const [refreshing, setRefreshing] = useState(false);
+  const [actors, setActors] = useState<Map<string, User>>(new Map());
+
+  // Hydrate actor avatars for the rows (best-effort; falls back to initials).
+  useEffect(() => {
+    const ids = Array.from(
+      new Set(notifications.map((n) => n.actorId).filter(Boolean)),
+    );
+    if (ids.length === 0) return;
+    let active = true;
+    getUsersByIds(ids)
+      .then((map) => {
+        if (active) setActors(map);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [notifications]);
+
+  const sections = useMemo(() => buildSections(notifications), [notifications]);
 
   // Mark all as read when the screen first comes into focus.
   // Subsequent focus events (back-nav from review/profile) won't trigger
@@ -137,17 +186,21 @@ export default function NotificationsScreen() {
       </View>
 
       {/* List */}
-      <FlatList
-        data={notifications}
+      <SectionList
+        sections={sections}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => (
           <NotificationItem
             notification={item}
+            actor={actors.get(item.actorId) ?? null}
             onPress={handlePress}
             onDelete={removeNotification}
           />
         )}
-        ItemSeparatorComponent={() => <View style={styles.separator} />}
+        renderSectionHeader={({ section }) => (
+          <Text style={styles.sectionHeader}>{section.title}</Text>
+        )}
+        stickySectionHeadersEnabled={false}
         contentContainerStyle={
           notifications.length === 0 ? styles.emptyContent : undefined
         }
@@ -196,7 +249,9 @@ export default function NotificationsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.cardBackground },
 
   header: {
@@ -243,10 +298,16 @@ const styles = StyleSheet.create({
   },
   rightSpacer: { width: 36 },
 
-  separator: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.divider,
-    marginLeft: 80, // align with body text, not icon tile
+  sectionHeader: {
+    fontFamily: fonts.bold,
+    fontSize: T.size.xs,
+    color: colors.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: T.tracking.wider,
+    paddingHorizontal: spacing.screen,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.sm,
+    backgroundColor: colors.cardBackground,
   },
   footerLoader: { paddingVertical: spacing.lg, alignItems: "center" },
 
@@ -287,4 +348,5 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingVertical: spacing.huge,
   },
-});
+  });
+}

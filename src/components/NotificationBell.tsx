@@ -9,12 +9,9 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { useNotifications } from "@/hooks/useNotifications";
-import {
-    colors,
-    fonts,
-    radius,
-    size
-} from "@/theme/colors";
+import { fonts, radius, size } from "@/theme/colors";
+import type { ThemeColors } from "@/theme/themes";
+import { useThemedStyles } from "@/theme/useThemedStyles";
 
 interface NotificationBellProps {
   onPress: () => void;
@@ -22,6 +19,7 @@ interface NotificationBellProps {
 
 export function NotificationBell({ onPress }: NotificationBellProps) {
   const { unreadCount } = useNotifications();
+  const { styles, colors } = useThemedStyles(makeStyles);
 
   return (
     <Pressable
@@ -51,7 +49,9 @@ export function NotificationBell({ onPress }: NotificationBellProps) {
   );
 }
 
-const styles = StyleSheet.create({
+function makeStyles(c: ThemeColors) {
+  const colors = c;
+  return StyleSheet.create({
   btn: {
     width: size.notifBtn,
     height: size.notifBtn,
@@ -85,4 +85,5 @@ const styles = StyleSheet.create({
     color: colors.textInverse,
     lineHeight: 12,
   },
-});
+  });
+}
