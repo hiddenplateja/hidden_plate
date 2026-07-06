@@ -33,6 +33,12 @@ import type {
 /**
  * Low-level invocation. Don't call this directly from feature code —
  * use the typed wrappers below.
+ *
+ * NOTE on trust: the Function ignores any `actorId` in this payload and
+ * derives the acting user from the injected x-appwrite-user-id header
+ * instead (you can't spoof another actor). We still pass actorId for the
+ * client-side dedupe check, but it carries no authority server-side. The
+ * Function's Execute permission must be "Users" so the header is present.
  */
 async function invokeSendNotification(
   payload: SendNotificationInput,
@@ -163,6 +169,68 @@ export async function triggerLikeNotification(
     body: `${input.actorName} liked your review`,
     data,
     bumpCounter,
+  });
+}
+
+/**
+ * Someone liked your community post.
+ *
+ * No counter bump — post like counts are read straight from the postLikes
+ * collection, so there's nothing to denormalize. Deep-links to the post
+ * thread via `data.postId`. Reuses the "like" type so the recipient's
+ * notifyOnLike preference applies. Skipped on self-like and dedupe.
+ */
+export async function triggerPostLikeNotification(
+  input: BaseInput & { postId: string },
+): Promise<void> {
+  const notify = await shouldNotify(input, "like", input.postId);
+  if (!notify) return; // no counter to bump on posts — nothing to do
+
+  const data: NotificationData = {
+    actorName: input.actorName,
+    postId: input.postId,
+  };
+
+  await invokeSendNotification({
+    userId: input.recipientUserId,
+    actorId: input.actorId,
+    type: "like",
+    title: "New like",
+    body: `${input.actorName} liked your post`,
+    data,
+  });
+}
+
+/**
+ * Someone commented on your community post.
+ *
+ * No counter bump (see triggerPostLikeNotification). Deep-links via
+ * `data.postId`. Reuses the "comment" type so notifyOnComment applies.
+ * Skipped on self-comment and dedupe.
+ */
+export async function triggerPostCommentNotification(
+  input: BaseInput & { postId: string; commentSnippet: string },
+): Promise<void> {
+  const notify = await shouldNotify(input, "comment", input.postId);
+  if (!notify) return;
+
+  const snippet =
+    input.commentSnippet.length > 80
+      ? `${input.commentSnippet.slice(0, 77).trim()}…`
+      : input.commentSnippet;
+
+  const data: NotificationData = {
+    actorName: input.actorName,
+    postId: input.postId,
+  };
+
+  await invokeSendNotification({
+    userId: input.recipientUserId,
+    actorId: input.actorId,
+    type: "comment",
+    title: "New comment",
+    body: `${input.actorName}: ${snippet}`,
+    data,
   });
 }
 

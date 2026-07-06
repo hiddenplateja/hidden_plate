@@ -13,7 +13,7 @@
 // Must be mounted INSIDE <AuthProvider> so it can read `useAuth()`.
 
 import * as Notifications from "expo-notifications";
-import { useRouter } from "expo-router";
+import { useRouter, type Href } from "expo-router";
 import {
     createContext,
     useCallback,
@@ -31,10 +31,7 @@ import {
     markAllRead as markAllReadSvc,
     markRead as markReadSvc,
 } from "@/services/notifications";
-import {
-    clearPushTokensForUser,
-    registerForPushNotifications,
-} from "@/services/pushTokens";
+import { registerForPushNotifications } from "@/services/pushTokens";
 import type {
     AppNotification,
     NotificationData,
@@ -198,10 +195,10 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
 
   useEffect(() => {
     if (!user) {
-      // Logout — clear push tokens for the previous user (if any)
-      const previousUserId = lastRegisteredUserId.current;
-      if (previousUserId) {
-        clearPushTokensForUser(previousUserId).catch(() => {});
+      // Logout — token cleanup happens in auth.logout() while the session is
+      // still alive (the Function that owns pushTokens needs the caller's auth
+      // header). Here we just reset local state.
+      if (lastRegisteredUserId.current) {
         lastRegisteredUserId.current = null;
         setPushToken(null);
       }
@@ -264,7 +261,9 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
             break;
           case "like":
           case "comment":
-            if (raw.reviewId) {
+            if (raw.postId) {
+              router.push(`/post/${raw.postId}` as unknown as Href);
+            } else if (raw.reviewId) {
               router.push(`/review/${raw.reviewId}`);
             } else {
               router.push("/notifications");

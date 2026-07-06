@@ -3,14 +3,42 @@
 //
 // Three modes:
 //
-//   ─── Single-recipient mode (default) ────────────────────────────────
-//   Payload: { userId, actorId, type, title, body, data, bumpCounter?, skipNotification? }
-//   Sends to ONE recipient.
+//   ─── Single-recipient mode (default, USER path) ─────────────────────
+//   Payload: { userId, type, data, bumpCounter?, skipNotification? }
+//   Sends to ONE recipient. REQUIRES a signed-in caller.
 //   Honors recipient's notification prefs from account.prefs:
 //     - notificationsEnabled (master)
 //     - notifyOnLike, notifyOnComment, notifyOnFollow (matched against `type`)
 //   When suppressed: counter bump still runs, but no notification doc is
 //   created and no push is sent.
+//
+//   SECURITY: the actor identity is NEVER taken from the payload. We read
+//   the caller's auth user ID from the x-appwrite-user-id header that
+//   Appwrite injects for authenticated executions, and use THAT as actorId.
+//   Set the function's Execute permission to "Users" (not "Any") so the
+//   header is always present.
+//
+//   SECURITY: the notification TEXT is never taken from the payload either.
+//   title/body are built server-side from `type`, the target kind
+//   (data.reviewId vs data.postId), and the caller's REAL display name
+//   looked up via the Users API. For comments, the snippet is read from the
+//   caller's actual comment row in the DB — not the payload. A modified
+//   client therefore cannot inject deceptive text or impersonate anyone.
+//
+//   SECURITY: bumpCounter is constrained. `field` must be one of
+//   likeCount / commentCount, and the caller must own a corresponding row
+//   (a like / a comment) on the target review before we touch its counter.
+//   Rather than blindly incrementing, we SET the counter to the
+//   authoritative count from the source-of-truth collection, so replayed
+//   executions can't inflate it.
+//
+//   ─── Single-recipient mode (ADMIN path) ─────────────────────────────
+//   Payload: { adminSecret, userId, type, title, body, actorId?, data? }
+//   When a valid `adminSecret` is supplied, custom title/body/actorId are
+//   trusted verbatim (still URL-filtered) and NO signed-in caller is
+//   required. This is the path for sending a one-off notification to a
+//   single user from the Appwrite Console or a trusted backend — the header
+//   is absent there, so the secret is what authorizes it.
 //
 //   ─── Broadcast mode ──────────────────────────────────────────────────
 //   Payload: { broadcast: true, adminSecret, type, title, body, data }
@@ -33,6 +61,9 @@
 //   NOTIFICATIONS_COLLECTION_ID
 //   PUSH_TOKENS_COLLECTION_ID
 //   REVIEWS_COLLECTION_ID
+//   REVIEW_LIKES_COLLECTION_ID       source-of-truth for likeCount bumps
+//   REVIEW_COMMENTS_COLLECTION_ID    source-of-truth for commentCount + review comment snippets
+//   POST_COMMENTS_COLLECTION_ID      source-of-truth for post comment snippets
 //   USERS_COLLECTION_ID
 //   REVIEW_REPORTS_COLLECTION_ID
 //   ADMIN_SECRET
@@ -61,6 +92,16 @@ function containsUrl(text) {
   if (!text || typeof text !== "string") return false;
   return URL_REGEX.test(text);
 }
+
+// Counter fields the Function is willing to touch, mapped to the env var
+// holding the source-of-truth collection that proves the caller earned the
+// bump. A caller may only bump a review's counter if they own a row (their
+// like / their comment) on that review. Any field not listed here is
+// rejected — this stops writes to arbitrary numeric attributes.
+const COUNTER_FIELD_SOURCES = {
+  likeCount: "REVIEW_LIKES_COLLECTION_ID",
+  commentCount: "REVIEW_COMMENTS_COLLECTION_ID",
+};
 
 // Map notification type → preference key. Add new types here as we add them.
 // If a type has no entry, it's treated as "always allowed" (subject to the
@@ -117,6 +158,9 @@ export default async ({ req, res, log, error }) => {
     NOTIFICATIONS_COLLECTION_ID,
     PUSH_TOKENS_COLLECTION_ID,
     REVIEWS_COLLECTION_ID,
+    REVIEW_LIKES_COLLECTION_ID,
+    REVIEW_COMMENTS_COLLECTION_ID,
+    POST_COMMENTS_COLLECTION_ID,
     USERS_COLLECTION_ID,
     REVIEW_REPORTS_COLLECTION_ID,
     ADMIN_SECRET,
@@ -165,6 +209,27 @@ export default async ({ req, res, log, error }) => {
     });
   }
 
+  // ── Push-token management ───────────────────────────────────────────────
+  // Register / clear this device's Expo push token. The token is ALWAYS bound
+  // to the authenticated caller (x-appwrite-user-id) — a client-supplied
+  // userId is never honored, so nobody can register their device under a
+  // victim's account and siphon that victim's pushes. Requires a signed-in
+  // caller (Execute permission = "Users").
+  if (payload.manageToken === "register" || payload.manageToken === "clear") {
+    const tokenCaller = req.headers["x-appwrite-user-id"];
+    if (!tokenCaller) {
+      error("Push-token call from anonymous caller — refusing");
+      return res.json({ success: false, error: "Must be signed in" }, 401);
+    }
+    return handlePushToken(payload, databases, tokenCaller, {
+      DATABASE_ID,
+      PUSH_TOKENS_COLLECTION_ID,
+      res,
+      log,
+      error,
+    });
+  }
+
   if (payload.broadcast === true) {
     if (!ADMIN_SECRET) {
       error("Broadcast attempted but ADMIN_SECRET is not configured");
@@ -188,15 +253,39 @@ export default async ({ req, res, log, error }) => {
     });
   }
 
-  return handleSingleRecipient(payload, databases, users, {
-    DATABASE_ID,
-    NOTIFICATIONS_COLLECTION_ID,
-    PUSH_TOKENS_COLLECTION_ID,
-    REVIEWS_COLLECTION_ID,
-    res,
-    log,
-    error,
-  });
+  // ── Single-recipient auth ───────────────────────────────────────────────
+  // Two ways to authorize:
+  //   ADMIN path — a valid adminSecret. Trusted backend / Console; custom
+  //     text allowed; no user session needed (the header is absent there).
+  //   USER path  — the x-appwrite-user-id header Appwrite injects for
+  //     authenticated executions. This is the trusted actor identity; text
+  //     is built server-side. Requires Execute permission = "Users".
+  // A call that is neither is anonymous and refused.
+  const isAdmin = Boolean(ADMIN_SECRET) && payload.adminSecret === ADMIN_SECRET;
+  const callerUserId = req.headers["x-appwrite-user-id"];
+  if (!isAdmin && !callerUserId) {
+    error("Single-recipient call from anonymous caller — refusing");
+    return res.json({ success: false, error: "Must be signed in" }, 401);
+  }
+
+  return handleSingleRecipient(
+    payload,
+    databases,
+    { isAdmin, callerUserId },
+    users,
+    {
+      DATABASE_ID,
+      NOTIFICATIONS_COLLECTION_ID,
+      PUSH_TOKENS_COLLECTION_ID,
+      REVIEWS_COLLECTION_ID,
+      REVIEW_LIKES_COLLECTION_ID,
+      REVIEW_COMMENTS_COLLECTION_ID,
+      POST_COMMENTS_COLLECTION_ID,
+      res,
+      log,
+      error,
+    },
+  );
 };
 
 function parseThreshold(raw) {
@@ -206,27 +295,30 @@ function parseThreshold(raw) {
 }
 
 // ─── Single-recipient handler ────────────────────────────────────────────────
-async function handleSingleRecipient(payload, databases, users, ctx) {
+// `auth` = { isAdmin, callerUserId }. In the USER path the actor identity and
+// all notification text are derived server-side; the payload's actorId/title/
+// body are ignored. In the ADMIN path (valid adminSecret) custom text is
+// trusted verbatim.
+async function handleSingleRecipient(payload, databases, auth, users, ctx) {
   const {
     DATABASE_ID,
     NOTIFICATIONS_COLLECTION_ID,
     PUSH_TOKENS_COLLECTION_ID,
     REVIEWS_COLLECTION_ID,
+    REVIEW_LIKES_COLLECTION_ID,
+    REVIEW_COMMENTS_COLLECTION_ID,
+    POST_COMMENTS_COLLECTION_ID,
     res,
     log,
     error,
   } = ctx;
 
-  const {
-    userId,
-    actorId,
-    type,
-    title,
-    body,
-    data,
-    bumpCounter,
-    skipNotification,
-  } = payload;
+  const { isAdmin, callerUserId } = auth;
+  const { userId, type, data, bumpCounter, skipNotification } = payload;
+
+  // The acting user is the authenticated caller (user path) or whatever the
+  // trusted admin supplies (admin path) — never an unauthenticated payload.
+  const actorId = isAdmin ? payload.actorId || "" : callerUserId;
 
   const isCounterOnly = skipNotification === true;
   if (isCounterOnly) {
@@ -239,10 +331,59 @@ async function handleSingleRecipient(payload, databases, users, ctx) {
         400,
       );
     }
-  } else {
-    if (!userId || !type || !title || !body) {
+  } else if (!userId || !type) {
+    return res.json(
+      { success: false, error: "userId and type are required" },
+      400,
+    );
+  }
+
+  // Counter bump runs regardless of notification prefs — the counter is
+  // visible to everyone (e.g. likeCount on a review). Prefs only control
+  // whether the AUTHOR gets notified about it.
+  //
+  // A bump is only honored if it's whitelisted AND (user path) the caller
+  // actually performed the action — owns a like / comment row on the review.
+  // See applyCounterBump. A rejected bump fails the whole request: a counter-
+  // only call with no valid action is an abuse attempt, and a notification
+  // whose backing action doesn't exist would be a spoof.
+  if (bumpCounter && (bumpCounter.reviewId || bumpCounter.field)) {
+    const result = await applyCounterBump(
+      databases,
+      {
+        DATABASE_ID,
+        REVIEWS_COLLECTION_ID,
+        REVIEW_LIKES_COLLECTION_ID,
+        REVIEW_COMMENTS_COLLECTION_ID,
+      },
+      bumpCounter,
+      callerUserId,
+      { requireOwnership: !isAdmin },
+      log,
+      error,
+    );
+    if (!result.ok) {
+      return res.json({ success: false, error: result.reason }, result.code);
+    }
+  }
+
+  if (isCounterOnly) {
+    return res.json({ success: true, bumped: true, notified: false });
+  }
+
+  // ── Resolve the notification's text + data ──────────────────────────────
+  // Admin path trusts the payload (URL-filtered). User path builds everything
+  // server-side from the trusted caller — see buildUserNotification.
+  let title;
+  let body;
+  let outData;
+  if (isAdmin) {
+    title = payload.title;
+    body = payload.body;
+    outData = data || null;
+    if (!title || !body) {
       return res.json(
-        { success: false, error: "userId, type, title, and body are required" },
+        { success: false, error: "title and body are required" },
         400,
       );
     }
@@ -253,40 +394,31 @@ async function handleSingleRecipient(payload, databases, users, ctx) {
         400,
       );
     }
-  }
-
-  // Counter bump runs regardless of notification prefs — the counter is
-  // visible to everyone (e.g. likeCount on a review). Prefs only control
-  // whether the AUTHOR gets notified about it.
-  if (
-    bumpCounter &&
-    bumpCounter.reviewId &&
-    bumpCounter.field &&
-    REVIEWS_COLLECTION_ID
-  ) {
-    try {
-      const review = await databases.getDocument(
-        DATABASE_ID,
-        REVIEWS_COLLECTION_ID,
-        bumpCounter.reviewId,
-      );
-      const current = review[bumpCounter.field] ?? 0;
-      await databases.updateDocument(
-        DATABASE_ID,
-        REVIEWS_COLLECTION_ID,
-        bumpCounter.reviewId,
-        { [bumpCounter.field]: current + 1 },
-      );
-      log(
-        `Bumped ${bumpCounter.field} on review ${bumpCounter.reviewId}: ${current} -> ${current + 1}`,
-      );
-    } catch (err) {
-      error(`Counter bump failed: ${err.message}`);
+  } else {
+    const built = await buildUserNotification(
+      { userId, type, data },
+      callerUserId,
+      users,
+      databases,
+      { DATABASE_ID, REVIEW_COMMENTS_COLLECTION_ID, POST_COMMENTS_COLLECTION_ID },
+      log,
+      error,
+    );
+    if (!built.ok) {
+      return res.json({ success: false, error: built.reason }, built.code);
     }
-  }
-
-  if (isCounterOnly) {
-    return res.json({ success: true, bumped: true, notified: false });
+    title = built.title;
+    body = built.body;
+    outData = built.data;
+    // Server-built text should never contain a URL, but the comment snippet
+    // is user content pulled from the DB — filter as a final safety net.
+    if (containsUrl(body)) {
+      error("Built notification body contained a URL — rejected");
+      return res.json(
+        { success: false, error: "Content contains disallowed links" },
+        400,
+      );
+    }
   }
 
   // ── Prefs check — bail out before creating doc/sending push ─────────────
@@ -299,6 +431,8 @@ async function handleSingleRecipient(payload, databases, users, ctx) {
     });
   }
 
+  const dataStr = outData ? JSON.stringify(outData) : null;
+
   try {
     await databases.createDocument(
       DATABASE_ID,
@@ -310,7 +444,7 @@ async function handleSingleRecipient(payload, databases, users, ctx) {
         type,
         title,
         body,
-        data: data ? JSON.stringify(data) : null,
+        data: dataStr,
         isRead: false,
       },
       [
@@ -351,7 +485,7 @@ async function handleSingleRecipient(payload, databases, users, ctx) {
     body,
     sound: "default",
     priority: "high",
-    data: { type, actorId: actorId || "", ...(data || {}) },
+    data: { type, actorId: actorId || "", ...(outData || {}) },
   }));
 
   try {
@@ -552,6 +686,110 @@ async function handleBroadcast(payload, databases, users, ctx) {
   });
 }
 
+// ─── Push-token handler ──────────────────────────────────────────────────────
+// `callerUserId` is the authenticated caller. The token is bound to THIS user
+// and no other — the payload cannot name a different owner.
+async function handlePushToken(payload, databases, callerUserId, ctx) {
+  const { DATABASE_ID, PUSH_TOKENS_COLLECTION_ID, res, log, error } = ctx;
+  const action = payload.manageToken;
+
+  // ── Clear: delete every token row owned by the caller (logout) ──────────
+  if (action === "clear") {
+    let deleted = 0;
+    try {
+      const owned = await paginateAllDocuments(
+        databases,
+        DATABASE_ID,
+        PUSH_TOKENS_COLLECTION_ID,
+        (doc) => doc.$id,
+        [Query.equal("userId", callerUserId)],
+      );
+      for (const id of owned) {
+        try {
+          await databases.deleteDocument(DATABASE_ID, PUSH_TOKENS_COLLECTION_ID, id);
+          deleted++;
+        } catch (err) {
+          error(`Failed to delete token ${id}: ${err.message}`);
+        }
+      }
+    } catch (err) {
+      error(`Token clear failed: ${err.message}`);
+      return res.json({ success: false, error: "Could not clear tokens" }, 500);
+    }
+    log(`Cleared ${deleted} push token(s) for user ${callerUserId}`);
+    return res.json({ success: true, cleared: deleted });
+  }
+
+  // ── Register: bind this device's token to the caller ────────────────────
+  const token = typeof payload.token === "string" ? payload.token.trim() : "";
+  const platform = payload.platform;
+
+  if (!token) {
+    return res.json({ success: false, error: "token is required" }, 400);
+  }
+  // Expo tokens look like ExponentPushToken[…] or ExpoPushToken[…]. Reject
+  // anything else so the collection can't be stuffed with junk.
+  if (!/^Expo(nent)?PushToken\[.+\]$/.test(token)) {
+    return res.json({ success: false, error: "Not a valid Expo push token" }, 400);
+  }
+  if (platform !== "ios" && platform !== "android") {
+    return res.json({ success: false, error: "platform must be ios or android" }, 400);
+  }
+
+  try {
+    // A physical device runs one account at a time, so a token belongs to
+    // exactly one user. Remove any rows for this token owned by ANYONE else
+    // (e.g. a previous account on this device) so their pushes stop landing
+    // here. Also lets us treat the caller's own existing row as idempotent.
+    const sameToken = await databases.listDocuments(
+      DATABASE_ID,
+      PUSH_TOKENS_COLLECTION_ID,
+      [Query.equal("token", token), Query.limit(100)],
+    );
+
+    let alreadyMine = false;
+    for (const doc of sameToken.documents) {
+      if (doc.userId === callerUserId) {
+        alreadyMine = true;
+        continue;
+      }
+      try {
+        await databases.deleteDocument(DATABASE_ID, PUSH_TOKENS_COLLECTION_ID, doc.$id);
+        log(`Reassigned token from stale owner ${doc.userId} to ${callerUserId}`);
+      } catch (err) {
+        error(`Failed to remove stale token row ${doc.$id}: ${err.message}`);
+      }
+    }
+
+    if (alreadyMine) {
+      return res.json({ success: true, created: false });
+    }
+
+    await databases.createDocument(
+      DATABASE_ID,
+      PUSH_TOKENS_COLLECTION_ID,
+      ID.unique(),
+      { userId: callerUserId, token, platform },
+      [
+        // Owner can read/delete their own token (needed for the logout clear
+        // fallback); only the Function's API key ever writes new rows.
+        Permission.read(Role.user(callerUserId)),
+        Permission.update(Role.user(callerUserId)),
+        Permission.delete(Role.user(callerUserId)),
+      ],
+    );
+    log(`Registered push token for user ${callerUserId} (${platform})`);
+    return res.json({ success: true, created: true });
+  } catch (err) {
+    // Unique-index race (another registration won) is fine.
+    if (err.code === 409) {
+      return res.json({ success: true, created: false });
+    }
+    error(`Token registration failed: ${err.message}`);
+    return res.json({ success: false, error: "Could not register token" }, 500);
+  }
+}
+
 // ─── Moderation handler ──────────────────────────────────────────────────────
 async function handleModeration(payload, databases, ctx) {
   const {
@@ -638,16 +876,226 @@ async function handleModeration(payload, databases, ctx) {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+/**
+ * Validate and apply a review counter bump on behalf of `callerUserId`.
+ *
+ * Guarantees:
+ *   1. `field` is whitelisted (likeCount / commentCount) — no writes to
+ *      arbitrary numeric attributes.
+ *   2. The caller owns a corresponding row (their like / their comment) on
+ *      the target review — you can't bump a counter for an action you never
+ *      performed, nor spam-bump a competitor's review.
+ *   3. The counter is SET to the authoritative count from the source-of-
+ *      truth collection, not blindly incremented — replayed executions
+ *      can't inflate it, and this reconciles any prior drift.
+ *
+ * `opts.requireOwnership` (default true) enforces guarantee #2. The admin
+ * path passes false — it's already trusted — but still gets the whitelist
+ * and authoritative recount.
+ *
+ * Returns { ok: true } or { ok: false, code, reason }.
+ */
+async function applyCounterBump(
+  databases,
+  env,
+  bumpCounter,
+  callerUserId,
+  opts,
+  log,
+  error,
+) {
+  const { reviewId, field } = bumpCounter;
+  const requireOwnership = opts?.requireOwnership !== false;
+
+  if (!reviewId || !field) {
+    return { ok: false, code: 400, reason: "bumpCounter needs reviewId and field" };
+  }
+
+  const sourceEnvKey = COUNTER_FIELD_SOURCES[field];
+  if (!sourceEnvKey) {
+    error(`Rejected counter bump: field "${field}" is not allowed`);
+    return { ok: false, code: 400, reason: "Unsupported counter field" };
+  }
+
+  const sourceCollectionId = env[sourceEnvKey];
+  if (!env.REVIEWS_COLLECTION_ID || !sourceCollectionId) {
+    error(`Counter bump not configured: missing REVIEWS_COLLECTION_ID or ${sourceEnvKey}`);
+    return { ok: false, code: 500, reason: "Counter bump not configured on server" };
+  }
+
+  let authoritativeCount;
+  try {
+    // Ownership proof: does the caller have a row on this review?
+    if (requireOwnership) {
+      const proof = await databases.listDocuments(env.DATABASE_ID, sourceCollectionId, [
+        Query.equal("reviewId", reviewId),
+        Query.equal("userId", callerUserId),
+        Query.limit(1),
+      ]);
+      if (proof.total === 0) {
+        error(
+          `Rejected counter bump: caller ${callerUserId} has no ${field} action on review ${reviewId}`,
+        );
+        return { ok: false, code: 403, reason: "Caller has not performed this action" };
+      }
+    }
+
+    // Authoritative total across all users for this review.
+    const all = await databases.listDocuments(env.DATABASE_ID, sourceCollectionId, [
+      Query.equal("reviewId", reviewId),
+      Query.limit(1),
+    ]);
+    authoritativeCount = all.total;
+  } catch (err) {
+    error(`Counter bump verification failed: ${err.message}`);
+    return { ok: false, code: 500, reason: "Counter verification failed" };
+  }
+
+  try {
+    await databases.updateDocument(env.DATABASE_ID, env.REVIEWS_COLLECTION_ID, reviewId, {
+      [field]: authoritativeCount,
+    });
+    log(`Set ${field} on review ${reviewId} to authoritative count ${authoritativeCount}`);
+    return { ok: true };
+  } catch (err) {
+    error(`Counter bump write failed: ${err.message}`);
+    return { ok: false, code: 500, reason: "Counter write failed" };
+  }
+}
+
+const SNIPPET_MAX = 80;
+
+/**
+ * Build a single-recipient notification entirely from trusted inputs (USER
+ * path). Nothing user-facing comes from the payload except opaque target IDs
+ * (reviewId / postId) whose only use is deep-linking.
+ *
+ *   - actorName: the caller's REAL display name from the Users API.
+ *   - title/body: fixed templates chosen by `type` + target kind.
+ *   - comment snippet: read from the caller's OWN comment row in the DB, then
+ *     truncated — never the payload's claimed text.
+ *
+ * Returns { ok, code, reason } on failure, or
+ * { ok: true, title, body, data } on success. `data` is a clean object with
+ * only actorName + the relevant target id.
+ */
+async function buildUserNotification(payload, callerUserId, users, databases, env, log, error) {
+  const { type, data } = payload;
+  const reviewId = data && typeof data.reviewId === "string" ? data.reviewId : null;
+  const postId = data && typeof data.postId === "string" ? data.postId : null;
+
+  const actorName = await resolveActorName(users, callerUserId, log);
+
+  const outData = { actorName };
+  if (reviewId) outData.reviewId = reviewId;
+  if (postId) outData.postId = postId;
+
+  if (type === "follow") {
+    return {
+      ok: true,
+      title: "New follower",
+      body: `${actorName} started following you`,
+      data: outData,
+    };
+  }
+
+  if (type === "like") {
+    if (reviewId) {
+      return { ok: true, title: "New like", body: `${actorName} liked your review`, data: outData };
+    }
+    if (postId) {
+      return { ok: true, title: "New like", body: `${actorName} liked your post`, data: outData };
+    }
+    return { ok: false, code: 400, reason: "like notification needs data.reviewId or data.postId" };
+  }
+
+  if (type === "comment") {
+    const target = reviewId
+      ? { collectionId: env.REVIEW_COMMENTS_COLLECTION_ID, idField: "reviewId", idValue: reviewId }
+      : postId
+        ? { collectionId: env.POST_COMMENTS_COLLECTION_ID, idField: "postId", idValue: postId }
+        : null;
+    if (!target) {
+      return { ok: false, code: 400, reason: "comment notification needs data.reviewId or data.postId" };
+    }
+    if (!target.collectionId) {
+      return { ok: false, code: 500, reason: "Comment snippets not configured on server" };
+    }
+
+    const snippet = await fetchOwnCommentSnippet(
+      databases,
+      env.DATABASE_ID,
+      target,
+      callerUserId,
+      error,
+    );
+    // No comment by this caller on this target → they didn't actually comment.
+    if (snippet === null) {
+      error(
+        `Rejected comment notification: caller ${callerUserId} has no comment on ${target.idField}=${target.idValue}`,
+      );
+      return { ok: false, code: 403, reason: "Caller has not commented on this" };
+    }
+
+    return {
+      ok: true,
+      title: "New comment",
+      body: `${actorName}: ${snippet}`,
+      data: outData,
+    };
+  }
+
+  return { ok: false, code: 400, reason: `Unsupported notification type: ${type}` };
+}
+
+/** The caller's display name, or "Someone" if it can't be read. */
+async function resolveActorName(users, userId, log) {
+  try {
+    const u = await users.get(userId);
+    const name = (u.name || "").trim();
+    return name || "Someone";
+  } catch (err) {
+    log(`Could not read actor name for ${userId}: ${err.message}`);
+    return "Someone";
+  }
+}
+
+/**
+ * Fetch the caller's most recent comment on a target (review or post) and
+ * return its text, truncated. Returns null if the caller has no comment there
+ * (which doubles as the ownership check for comment notifications).
+ */
+async function fetchOwnCommentSnippet(databases, databaseId, target, callerUserId, error) {
+  try {
+    const res = await databases.listDocuments(databaseId, target.collectionId, [
+      Query.equal(target.idField, target.idValue),
+      Query.equal("userId", callerUserId),
+      Query.orderDesc("$createdAt"),
+      Query.limit(1),
+    ]);
+    if (res.documents.length === 0) return null;
+    const text = (res.documents[0].text || "").trim();
+    if (!text) return null;
+    return text.length > SNIPPET_MAX ? `${text.slice(0, SNIPPET_MAX - 3).trim()}…` : text;
+  } catch (err) {
+    error(`Failed to read comment snippet: ${err.message}`);
+    // Treat read failure as "no proof" — safer to drop the notification than
+    // to fall back to attacker-supplied text.
+    return null;
+  }
+}
+
 async function paginateAllDocuments(
   databases,
   databaseId,
   collectionId,
   extract,
+  extraQueries = [],
 ) {
   const out = [];
   let cursor = null;
   for (let safety = 0; safety < 200; safety++) {
-    const queries = [Query.limit(PAGE_SIZE)];
+    const queries = [...extraQueries, Query.limit(PAGE_SIZE)];
     if (cursor) queries.push(Query.cursorAfter(cursor));
     const res = await databases.listDocuments(
       databaseId,

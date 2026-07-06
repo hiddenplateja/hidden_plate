@@ -14,6 +14,7 @@ import {
 
 import { account, appwriteConfig, databases } from "@/services/appwrite";
 import { setLastOAuth } from "@/services/lastOAuth";
+import { clearPushTokensForUser } from "@/services/pushTokens";
 import { setOnboardingPending } from "@/services/userPreferences";
 import type { LoginInput, SignupInput, User } from "@/types/user";
 
@@ -403,6 +404,12 @@ export async function changePassword(
  * Log out. Deletes the current session both server and client side.
  */
 export async function logout(): Promise<void> {
+  // Clear this device's push tokens WHILE the session is still valid — the
+  // Function that owns the pushTokens collection binds the delete to the
+  // authenticated caller, so it must run before the session is destroyed.
+  // Best-effort: never block sign-out on it.
+  await clearPushTokensForUser();
+
   try {
     await account.deleteSession("current");
   } catch (err) {

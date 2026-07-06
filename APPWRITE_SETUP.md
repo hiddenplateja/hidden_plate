@@ -312,6 +312,340 @@ one-tap "backfill owner menus" admin action.
 
 ---
 
+## 12. `postLikes` + `postComments` — likes & comments on community posts
+
+Optional feature: gives plain community posts (the `posts` collection) their own
+likes and comment threads, independent of reviews. Tapping a post in the
+Community feed opens the post thread (`app/post/[id].tsx`); the feed card and the
+thread show a live like count + comment count.
+
+**Design note — no counters on the post doc.** A post is only updatable by its
+author (per-doc permission), so a liker/commenter can't bump a counter on it.
+Instead these two collections ARE the source of truth: counts are derived by
+querying them (`services/postLikes.ts`, `services/postComments.ts`). No server
+Function is involved. Each feature is independent — enable likes, comments, or
+both.
+
+Create a collection `postLikes`:
+
+| Attribute | Type | Size | Required | Notes |
+|---|---|---|---|---|
+| `postId` | String | 36 | Yes | the liked post's `$id` |
+| `userId` | String | 64 | Yes | the liker's auth user id |
+
+- **Index:** unique compound `post_user_idx` on (`postId`, `userId`) — one like
+  per user per post, and makes double-taps a no-op. Add a key index on `postId`
+  alone for the count/batch queries.
+- **Permissions (collection-level):** **Users → Create.**
+- **Document Security: ON.** The app sets per-doc `read(users)` + `delete(owner)`
+  on create, so anyone can see the like exists but only the liker can remove it.
+
+Create a collection `postComments`:
+
+| Attribute | Type | Size | Required | Notes |
+|---|---|---|---|---|
+| `postId` | String | 36 | Yes | the commented post's `$id` |
+| `userId` | String | 64 | Yes | the commenter's auth user id |
+| `text` | String | 1000 | Yes | the comment body |
+
+- **Index:** key on `postId` (thread lookup + batch counts).
+- **Permissions (collection-level):** **Users → Create.**
+- **Document Security: ON.** The app sets per-doc `read(users)` + `delete(owner)`
+  on create — anyone can read the thread; only the author can delete their comment.
+
+Put the ids in `.env.local` as `EXPO_PUBLIC_APPWRITE_POST_LIKES_COLLECTION_ID`
+and `EXPO_PUBLIC_APPWRITE_POST_COMMENTS_COLLECTION_ID` (+ EAS env) and restart
+Metro `--clear`. Until each is set, that action is hidden (no like button /
+"commenting isn't available yet") and the rest of the feed is unaffected.
+
+> Security note: like reviews, these collections are Users-writable and rely on
+> per-doc permissions + Document Security being ON. The like/comment *counts*
+> are read off the collections, so they can't be inflated by writing to the post
+> doc — but a modified client could still create rows directly. That's the same
+> honest-client posture as the rest of the app; a server Function would be the
+> hard boundary if abuse shows up. See the security audit for context.
+
+---
+
+## 13. `postReports` — reporting community posts
+
+Optional feature: lets signed-in users report a community post as inappropriate
+(from the post's ⋯ menu in the feed). Reports land in **Admin → Post reports**,
+where you delete the post or dismiss the report(s). Mirrors the review/comment
+report flow — manual review, no auto-hide (posts are owner-only writable).
+
+Create a collection `postReports`:
+
+| Attribute | Type | Size | Required | Notes |
+|---|---|---|---|---|
+| `postId` | String | 36 | Yes | the reported post's `$id` |
+| `reportedByUserId` | String | 64 | Yes | who filed the report |
+| `reason` | String | 16 | Yes | `inappropriate` / `spam` / `fake` / `other` |
+| `notes` | String | 1000 | No | optional free-text detail |
+
+- **Index:** unique compound `post_reporter_idx` on (`postId`, `reportedByUserId`)
+  — one report per user per post (a repeat report is a silent no-op). Add a key
+  index on `postId` for the admin grouping query.
+- **Permissions (collection-level):** **Users → Create**; **Admins team → Read /
+  Delete** (the admin queue reads + dismisses). Document Security: **ON** (the
+  reporter also gets per-doc Read on their own report).
+
+Put the id in `.env.local` as `EXPO_PUBLIC_APPWRITE_POST_REPORTS_COLLECTION_ID`
+(+ EAS env) and restart Metro `--clear`. Until it's set, the "Report" action and
+the admin section stay hidden.
+
+---
+
+## 14. `postCommentReports` — reporting comments on posts
+
+Optional feature: lets users report a comment on a community post (the ⋯/flag
+on each comment in the post thread). Reports land in **Admin → Post comment
+reports**, where you delete the comment or dismiss the report(s). Same model as
+review-comment reports.
+
+Create a collection `postCommentReports`:
+
+| Attribute | Type | Size | Required | Notes |
+|---|---|---|---|---|
+| `commentId` | String | 36 | Yes | the reported comment's `$id` |
+| `postId` | String | 36 | Yes | the parent post's `$id` (admin deep-link) |
+| `reportedByUserId` | String | 64 | Yes | who filed the report |
+| `reason` | String | 16 | Yes | `inappropriate` / `spam` / `fake` / `other` |
+| `notes` | String | 1000 | No | optional free-text detail |
+
+- **Index:** unique compound `comment_reporter_idx` on (`commentId`,
+  `reportedByUserId`) — one report per user per comment. Add a key index on
+  `commentId` for the admin grouping query.
+- **Permissions (collection-level):** **Users → Create**; **Admins team → Read /
+  Delete**. Document Security: **ON** (reporter gets per-doc Read).
+- **Note:** deleting a reported comment from the admin queue calls
+  `deletePostComment`, which needs the **Admins team** to have **Delete** on the
+  `postComments` collection (same as reviewComments) — grant that if you haven't.
+
+Put the id in `.env.local` as
+`EXPO_PUBLIC_APPWRITE_POST_COMMENT_REPORTS_COLLECTION_ID` (+ EAS env) and restart
+Metro `--clear`. Until it's set, the per-comment report action and the admin
+section stay hidden.
+
+---
+
+## 15. `send-notification` Appwrite Function — push + in-app notifications
+
+The **`send-notification`** Function (`appwrite-functions/send-notification/`) is
+the single server-side entry point for notifications. It runs with an **API
+key** so it can write counters the caller doesn't own, read other users' push
+tokens, and fan out broadcasts. The app calls it via
+`functions.createExecution` from `src/services/notificationTriggers.ts`.
+
+It has four modes, selected by the payload:
+
+| Mode | Trigger | Who calls it |
+|---|---|---|
+| **Single-recipient — USER** | default (no `broadcast`/`moderation` flag) + signed-in caller | the app (like / comment / follow) |
+| **Single-recipient — ADMIN** | default + valid `adminSecret` | you, from the Console / a trusted backend |
+| **Broadcast** | `broadcast: true` + valid `adminSecret` | admin announcements |
+| **Moderation** | `moderation: true` | report-threshold auto-hide |
+
+### Deploy + configure
+
+1. Create the Function (Node runtime), deploy the `send-notification/` folder.
+2. **Execute permission → `Users`** (Console → Function → Settings → Execute
+   access). This is a **security boundary**, not a convenience: the USER path
+   reads the caller's identity from the `x-appwrite-user-id` header Appwrite
+   only injects for authenticated executions. Setting it to `Any` would let
+   anonymous callers through. (The ADMIN path doesn't need the header — the
+   `adminSecret` authorizes it — which is why Console executions still work.)
+3. Give the Function's API key these scopes: `documents.read`,
+   `documents.write`, `users.read`.
+4. Set the Function **environment variables**:
+
+```
+APPWRITE_API_KEY                 API key with the scopes above
+DATABASE_ID
+NOTIFICATIONS_COLLECTION_ID
+PUSH_TOKENS_COLLECTION_ID
+REVIEWS_COLLECTION_ID
+REVIEW_LIKES_COLLECTION_ID       source-of-truth for likeCount bumps
+REVIEW_COMMENTS_COLLECTION_ID    source-of-truth for commentCount + review comment snippets
+POST_COMMENTS_COLLECTION_ID      source-of-truth for post comment snippets
+USERS_COLLECTION_ID              (broadcast recipient enumeration)
+REVIEW_REPORTS_COLLECTION_ID     (moderation mode)
+ADMIN_SECRET                     shared secret for the ADMIN + broadcast paths
+MODERATION_REPORT_THRESHOLD      optional, default 3
+```
+
+Put the Function **ID** in the app env as
+`EXPO_PUBLIC_APPWRITE_SEND_NOTIFICATION_FUNCTION_ID` so the triggers can find
+it (until set, the app logs a warning and skips dispatch).
+
+### Security model (why the payloads look the way they do)
+
+- **Actor is never trusted from the payload.** In the USER path the acting user
+  is the `x-appwrite-user-id` header; any `actorId` you send is ignored. You
+  can't impersonate another user.
+- **Text is never trusted from the payload** (USER path). `title`/`body` are
+  built server-side from `type` + target kind + the caller's **real** display
+  name (Users API). Comment snippets are read from the caller's **own comment
+  row in the DB**, not the payload. A modified client can't inject deceptive or
+  phishing text.
+- **Counter bumps are constrained.** `bumpCounter.field` must be
+  `likeCount` or `commentCount`, the caller must own the matching like/comment
+  row, and the counter is **set to the authoritative row count** (immune to
+  replayed executions), never blindly incremented.
+- The **ADMIN path** (valid `adminSecret`) bypasses all of the above — custom
+  `title`/`body`/`actorId` are trusted verbatim (still URL-filtered). Use it
+  only from trusted places (the Console, a server), never ship the secret in
+  the app.
+
+### JSON payloads by notification type
+
+The app builds these in `notificationTriggers.ts`; you'd only hand-write them
+for Console testing or admin sends. In the USER path the recipient is `userId`
+(the target's **auth user id**, i.e. the `userId` field on their docs — not the
+document `$id`), and the actor is the signed-in caller.
+
+**Follow** — someone followed `userId`:
+```json
+{ "userId": "<recipient auth id>", "type": "follow" }
+```
+
+**Like on a review** — bumps `likeCount`, notifies the author:
+```json
+{
+  "userId": "<review author auth id>",
+  "type": "like",
+  "data": { "reviewId": "<reviewId>" },
+  "bumpCounter": { "reviewId": "<reviewId>", "field": "likeCount" }
+}
+```
+
+**Like on a community post** — no counter (post like counts are read off
+`postLikes`):
+```json
+{
+  "userId": "<post author auth id>",
+  "type": "like",
+  "data": { "postId": "<postId>" }
+}
+```
+
+**Comment on a review** — bumps `commentCount`; the snippet is pulled from the
+caller's own comment row, so you don't send the text:
+```json
+{
+  "userId": "<review author auth id>",
+  "type": "comment",
+  "data": { "reviewId": "<reviewId>" },
+  "bumpCounter": { "reviewId": "<reviewId>", "field": "commentCount" }
+}
+```
+
+**Comment on a community post** — no counter; snippet pulled from `postComments`:
+```json
+{
+  "userId": "<post author auth id>",
+  "type": "comment",
+  "data": { "postId": "<postId>" }
+}
+```
+
+**Counter-only** — bump without notifying (self-action or deduped notification).
+`userId`/`type` aren't required; only the bump is honored:
+```json
+{
+  "skipNotification": true,
+  "bumpCounter": { "reviewId": "<reviewId>", "field": "likeCount" }
+}
+```
+
+**ADMIN — custom notification to one user** (Console / backend). Requires
+`adminSecret`; `title`/`body`/`actorId`/`data` are trusted as-is:
+```json
+{
+  "adminSecret": "<ADMIN_SECRET>",
+  "userId": "<recipient auth id>",
+  "type": "system",
+  "title": "Heads up",
+  "body": "Your restaurant claim was approved.",
+  "actorId": "",
+  "data": { "restaurantId": "<id>" }
+}
+```
+> `type` maps to a preference toggle: `like`→`notifyOnLike`,
+> `comment`→`notifyOnComment`, `follow`→`notifyOnFollow`,
+> `broadcast`/`new_restaurant`→`notifyOnBroadcast`. A type with no mapping
+> (e.g. `system`) is gated only by the master `notificationsEnabled` toggle.
+
+**Broadcast — announce to every user** (Console / admin). Honors each
+recipient's `notifyOnBroadcast` + master toggle:
+```json
+{
+  "broadcast": true,
+  "adminSecret": "<ADMIN_SECRET>",
+  "type": "broadcast",
+  "title": "New feature",
+  "body": "Community posts are live — tap to explore.",
+  "data": { "screen": "community" }
+}
+```
+
+**Moderation — recount reports, auto-hide at threshold** (no auth; only acts on
+real report counts):
+```json
+{ "moderation": true, "reviewId": "<reviewId>" }
+```
+
+> Title/body in every path are rejected if they contain a URL (links are
+> stripped from notifications by design). `data` is not URL-filtered — keep
+> deep-link params there, not in the visible text.
+
+### The `notifications` + `pushTokens` collections
+
+The Function reads/writes these with its API key. **Neither grants any write
+permission to Users** — that's what stops the two attacks below.
+
+**`notifications`** — in-app notification feed. Attributes: `userId` (64),
+`actorId` (64), `type` (16), `title` (256), `body` (512), `data` (String,
+JSON), `isRead` (Boolean).
+- **Document Security: ON.** The Function stamps each doc with
+  `read/update/delete` for the recipient only, so a user sees only their own
+  feed and can mark/delete their own rows.
+- **Collection-level permissions:** none for Users (no create/read at the
+  collection level — per-doc read is what grants access). Only the API key
+  creates rows, so no one can forge a notification into someone's feed.
+
+**`pushTokens`** — Expo push tokens for targeting. Attributes: `userId` (64),
+`token` (256), `platform` (16, `ios`/`android`).
+- **Index:** unique compound `user_token_idx` on (`userId`, `token`).
+- **Document Security: ON.**
+- **Collection-level permissions:** **none for Users.** In particular do **not**
+  grant Users `Create`. Registration goes through the Function
+  (`manageToken: "register"`), which binds the token to the
+  `x-appwrite-user-id` header and ignores any client-supplied `userId`. If you
+  grant Users `Create` here, an attacker can insert `{ userId: <victim>,
+  token: <their device> }` and receive the victim's pushes (follower names,
+  comment snippets — a PII leak). The Function-only path closes that.
+- On register the Function also deletes any row holding the **same token under a
+  different user** (a device that switched accounts), so a stale row can't keep
+  leaking pushes to a previous owner.
+
+**Push-token payloads** (both require a signed-in caller; `userId` is always the
+auth header, never the payload):
+
+Register / refresh this device's token (called on login):
+```json
+{ "manageToken": "register", "token": "ExponentPushToken[xxxxxxxx]", "platform": "ios" }
+```
+
+Clear this device's tokens (called from `auth.logout()` **before** the session
+is destroyed — once the session is gone the Function refuses the anonymous
+call):
+```json
+{ "manageToken": "clear" }
+```
+
+---
+
 ## Env-var wiring after creating the above
 
 **App `.env.local`** (restart Metro `--clear` after):
@@ -328,6 +662,8 @@ EXPO_PUBLIC_APPWRITE_LISTS_COLLECTION_ID="..."
 EXPO_PUBLIC_APPWRITE_BUG_REPORTS_COLLECTION_ID="..."
 # Turns on owner-editable menus (the restaurantMenus override collection).
 EXPO_PUBLIC_APPWRITE_RESTAURANT_MENUS_COLLECTION_ID="..."
+# Turns on server-side notifications (the send-notification Function — §15).
+EXPO_PUBLIC_APPWRITE_SEND_NOTIFICATION_FUNCTION_ID="..."
 ```
 
 **Worker `wrangler.jsonc` vars** (already templated):

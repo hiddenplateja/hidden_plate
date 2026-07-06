@@ -3,29 +3,27 @@
 // device's Expo push token to Appwrite so the send-notification Function
 // can target it later.
 //
+// SECURITY: registration + clearing are routed through the send-notification
+// Function, NOT written directly by the client. The Function binds every
+// token to the authenticated caller (x-appwrite-user-id) and ignores any
+// client-supplied userId, so nobody can register their device under another
+// user's account and siphon that victim's pushes. The pushTokens collection
+// grants NO create/write permission to Users — only the Function's API key
+// writes it. See APPWRITE_SETUP.md §15.
+//
 // Notes:
 //   - Push notifications DO NOT work on simulators/emulators. registerForPush
 //     no-ops on those devices to avoid throwing.
 //   - Tokens can change (app reinstall, restored backup, etc) so we re-save
-//     on every login rather than trusting a cached "I've registered before"
-//     flag. The unique index on (userId, token) prevents duplicates.
-//   - The Function reads from this collection with an API key. The client
-//     never reads tokens (we set no Read permission on the collection — only
-//     create/update/delete by the token owner).
+//     on every login. The Function is idempotent (unique (userId, token)).
 
 import Constants from "expo-constants";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
+import { ExecutionMethod } from "react-native-appwrite";
 import { Platform } from "react-native";
-import {
-    AppwriteException,
-    ID,
-    Permission,
-    Query,
-    Role,
-} from "react-native-appwrite";
 
-import { appwriteConfig, databases } from "@/services/appwrite";
+import { appwriteConfig, functions } from "@/services/appwrite";
 
 export class PushTokenError extends Error {
   constructor(
@@ -35,13 +33,6 @@ export class PushTokenError extends Error {
     super(message);
     this.name = "PushTokenError";
   }
-}
-
-interface PushTokenDoc {
-  $id: string;
-  userId: string;
-  token: string;
-  platform: "ios" | "android";
 }
 
 /**
@@ -111,7 +102,7 @@ export async function registerForPushNotifications(
         projectId,
       });
       const token = tokenData.data;
-      await saveTokenToDatabase(userId, token);
+      await saveTokenToDatabase(token);
       return token;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -136,69 +127,64 @@ export async function registerForPushNotifications(
 }
 
 /**
- * Save the token to Appwrite if not already present.
- * Idempotent — relies on the unique (userId, token) index.
+ * Register the token via the send-notification Function, which binds it to
+ * the authenticated caller server-side. The client never writes the
+ * pushTokens collection directly — see the security note at the top.
+ *
+ * Idempotent + best-effort: a failure here is logged, not thrown, since push
+ * is non-critical to the user's primary action.
  */
-async function saveTokenToDatabase(
-  userId: string,
-  token: string,
-): Promise<void> {
-  try {
-    // Check first — cheaper than relying on unique-index error
-    const existing = await databases.listDocuments(
-      appwriteConfig.databaseId,
-      appwriteConfig.collections.pushTokens,
-      [
-        Query.equal("userId", userId),
-        Query.equal("token", token),
-        Query.limit(1),
-      ],
+async function saveTokenToDatabase(token: string): Promise<void> {
+  if (!appwriteConfig.functions.sendNotification) {
+    console.warn(
+      "[pushTokens] no send-notification Function ID configured; skipping register",
     );
-    if (existing.total > 0) return;
+    return;
+  }
 
-    await databases.createDocument(
-      appwriteConfig.databaseId,
-      appwriteConfig.collections.pushTokens,
-      ID.unique(),
-      {
-        userId,
+  try {
+    await functions.createExecution({
+      functionId: appwriteConfig.functions.sendNotification,
+      body: JSON.stringify({
+        manageToken: "register",
         token,
-        platform: Platform.OS as "ios" | "android",
-      },
-      [
-        Permission.update(Role.user(userId)),
-        Permission.delete(Role.user(userId)),
-      ],
-    );
+        platform: Platform.OS,
+      }),
+      async: false,
+      method: ExecutionMethod.POST,
+    });
   } catch (err) {
-    // Unique-index violation is fine — token already saved by another flow
-    if (err instanceof AppwriteException && err.code === 409) return;
-    console.warn("[pushTokens] save failed:", err);
+    console.warn("[pushTokens] register failed:", err);
   }
 }
 
 /**
- * Remove all push tokens for this user. Called on logout so the device
- * stops receiving pushes for an account that's no longer signed in.
+ * Remove all push tokens for the signed-in user via the Function (which binds
+ * the delete to the authenticated caller — a client can't clear someone
+ * else's tokens). Call this while the session is still alive (e.g. just
+ * before signing out); once the session is gone the Function refuses the
+ * anonymous call.
+ *
+ * The `userId` arg is retained for call-site compatibility/logging only — the
+ * Function derives the real owner from the auth header, never from the client.
  *
  * Best-effort — a failure here is logged but not thrown.
  */
-export async function clearPushTokensForUser(userId: string): Promise<void> {
+export async function clearPushTokensForUser(
+  userId?: string,
+): Promise<void> {
+  if (!appwriteConfig.functions.sendNotification) return;
+
   try {
-    const res = await databases.listDocuments(
-      appwriteConfig.databaseId,
-      appwriteConfig.collections.pushTokens,
-      [Query.equal("userId", userId), Query.limit(100)],
-    );
-    await Promise.all(
-      res.documents.map((doc) =>
-        databases.deleteDocument(
-          appwriteConfig.databaseId,
-          appwriteConfig.collections.pushTokens,
-          (doc as unknown as PushTokenDoc).$id,
-        ),
-      ),
-    );
+    // async: the execution is bound to the caller's auth header at enqueue
+    // time, so it clears correctly even though the session is about to end —
+    // and sign-out isn't blocked waiting for the deletes to finish.
+    await functions.createExecution({
+      functionId: appwriteConfig.functions.sendNotification,
+      body: JSON.stringify({ manageToken: "clear" }),
+      async: true,
+      method: ExecutionMethod.POST,
+    });
   } catch (err) {
     console.warn("[pushTokens] clear failed:", err);
   }
