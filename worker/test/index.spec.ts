@@ -40,6 +40,7 @@ function makeEnv(opts: { allow?: boolean; webhookAuth?: string } = {}): Env {
     RL_EMAIL_SEND: limiter,
     RL_EMAIL_VERIFY: limiter,
     RL_EMAIL_CONFIRM: limiter,
+    RL_RESTAURANT_SUBMIT: limiter,
   };
 }
 
@@ -54,9 +55,11 @@ interface FetchScenario {
   user?: Record<string, unknown> | null;
   /** GET .../documents/<id> -> the existing OTP doc, or null for "not found". */
   existingOtp?: Record<string, unknown> | null;
+  /** GET /account (JWT-authed) -> the resolved account, or null to reject with 401. */
+  account?: Record<string, unknown> | null;
 }
 function installFetch(scenario: FetchScenario = {}) {
-  const { userTotal = 0, existingOtp = null, user } = scenario;
+  const { userTotal = 0, existingOtp = null, user, account } = scenario;
   // GET /users? returns both `total` (isEmailRegistered) and `users[0]`
   // (getUserByEmail). Default a stub user in when the email "exists".
   const usersArr =
@@ -79,6 +82,12 @@ function installFetch(scenario: FetchScenario = {}) {
     // Resend email send.
     if (url.startsWith("https://api.resend.com/emails")) {
       return new Response(JSON.stringify({ id: "email_test" }), { status: 200 });
+    }
+    // Appwrite get account (JWT-authed). Present only when a test opts in.
+    if (method === "GET" && /\/account$/.test(url)) {
+      return account
+        ? new Response(JSON.stringify(account), { status: 200 })
+        : new Response("unauthorized", { status: 401 });
     }
     // Appwrite admin Users list (email-already-registered + reset lookup).
     if (url.includes("/users?")) {
@@ -274,13 +283,15 @@ describe("/email/reset-send", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("404s when no account exists for the email, and never emails", async () => {
+  it("returns a neutral 200 when no account exists, and never emails (anti-enumeration)", async () => {
     const fetchMock = installFetch({ userTotal: 0 });
     const res = await worker.fetch(
       post("/email/reset-send", { email: "ghost@example.com" }),
       makeEnv(),
     );
-    expect(res.status).toBe(404);
+    // Same response an existing account gets — no existence oracle.
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
     expect(calledResend(fetchMock)).toBe(false);
   });
 
@@ -338,6 +349,34 @@ describe("/email/reset", () => {
     expect(res.status).toBe(400);
   });
 
+  it("rejects an all-numeric password with 400 and never sets a password", async () => {
+    const fetchMock = installFetch({ userTotal: 1 });
+    const res = await worker.fetch(
+      post("/email/reset", {
+        email: "user@example.com",
+        code: "123456",
+        password: "1234567890",
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(400);
+    expect(calledPasswordUpdate(fetchMock)).toBe(false);
+  });
+
+  it("rejects a common password with 400 and never sets a password", async () => {
+    const fetchMock = installFetch({ userTotal: 1 });
+    const res = await worker.fetch(
+      post("/email/reset", {
+        email: "user@example.com",
+        code: "123456",
+        password: "password123",
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(400);
+    expect(calledPasswordUpdate(fetchMock)).toBe(false);
+  });
+
   it("rejects an incorrect code with 400 and never sets a password", async () => {
     const fetchMock = installFetch({
       userTotal: 1,
@@ -390,6 +429,91 @@ describe("/email/reset", () => {
       makeEnv({ allow: false }),
     );
     expect(res.status).toBe(429);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("/email/password-changed", () => {
+  it("rejects a request with no JWT -> 401 and never emails", async () => {
+    const fetchMock = installFetch();
+    const res = await worker.fetch(
+      post("/email/password-changed", {}),
+      makeEnv(),
+    );
+    expect(res.status).toBe(401);
+    expect(calledResend(fetchMock)).toBe(false);
+  });
+
+  it("rejects an invalid/expired JWT -> 401 and never emails", async () => {
+    const fetchMock = installFetch({ account: null });
+    const res = await worker.fetch(
+      post("/email/password-changed", { jwt: "bad" }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(401);
+    expect(calledResend(fetchMock)).toBe(false);
+  });
+
+  it("emails the account's OWN address (from the JWT) -> 200 { ok: true }", async () => {
+    const fetchMock = installFetch({
+      account: { $id: "u1", email: "owner@example.com" },
+    });
+    const res = await worker.fetch(
+      post("/email/password-changed", { jwt: "good" }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(calledResend(fetchMock)).toBe(true);
+    // The recipient is the JWT-resolved address, never a body-supplied one.
+    const resendCall = fetchMock.mock.calls.find(([u]) =>
+      String(u).startsWith("https://api.resend.com/emails"),
+    );
+    const sentBody = JSON.parse(
+      String((resendCall?.[1] as { body?: string })?.body ?? "{}"),
+    );
+    expect(sentBody.to).toEqual(["owner@example.com"]);
+  });
+
+  it("returns 429 when the per-IP limiter is exhausted", async () => {
+    const fetchMock = installFetch({ account: { $id: "u1", email: "o@e.com" } });
+    const res = await worker.fetch(
+      post("/email/password-changed", { jwt: "good" }),
+      makeEnv({ allow: false }),
+    );
+    expect(res.status).toBe(429);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("/restaurant/submit", () => {
+  it("rejects a request with no JWT -> 401", async () => {
+    const fetchMock = installFetch();
+    const res = await worker.fetch(
+      post("/restaurant/submit", { data: { name: "Testers" } }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 429 when the per-IP limiter is exhausted (before any work)", async () => {
+    const fetchMock = installFetch({ account: { $id: "u1", email: "o@e.com" } });
+    const res = await worker.fetch(
+      post("/restaurant/submit", {
+        jwt: "good",
+        data: {
+          name: "Scotchies",
+          address: "1 Beach Rd",
+          parish: "St. James",
+          latitude: 18.5,
+          longitude: -77.9,
+        },
+      }),
+      makeEnv({ allow: false }),
+    );
+    expect(res.status).toBe(429);
+    // Rate-limited before JWT verification or any Appwrite call.
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

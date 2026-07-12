@@ -37,7 +37,6 @@ interface UserDoc {
   $id: string;
   $createdAt: string;
   userId: string;
-  email: string;
   username: string;
   displayName: string;
   avatarUrl?: string | null;
@@ -47,11 +46,19 @@ interface UserDoc {
 /**
  * Map an Appwrite users-collection document to our User type.
  * Centralized so if the doc shape changes you fix one place.
+ *
+ * The email comes from the Appwrite Account (only the owner can read it), NOT
+ * the profile doc — profile docs are readable by all signed-in users, so
+ * storing email there would let anyone harvest every user's address.
  */
-function mapUserDoc(doc: UserDoc, emailVerified: boolean): User {
+function mapUserDoc(
+  doc: UserDoc,
+  accountEmail: string,
+  emailVerified: boolean,
+): User {
   return {
     id: doc.userId,
-    email: doc.email,
+    email: accountEmail,
     username: doc.username,
     displayName: doc.displayName,
     avatarUrl: doc.avatarUrl ?? null,
@@ -171,13 +178,14 @@ export async function signup({
     // 4. Create the profile document with per-document permissions:
     //    - Owner: read, update, delete
     //    - Any logged-in user: read
+    //    No email here — the doc is readable by every signed-in user, so the
+    //    address lives only on the Account (owner-readable).
     await databases.createDocument(
       appwriteConfig.databaseId,
       appwriteConfig.collections.users,
       ID.unique(),
       {
         userId: accountId,
-        email,
         username,
         displayName,
         avatarUrl: null,
@@ -273,6 +281,33 @@ async function mintJwt(): Promise<string> {
 }
 
 /**
+ * Ask the worker to email a "your password was changed" alert for the IN-APP
+ * change flow (the password write itself happens client-side via Appwrite).
+ * The worker resolves the recipient from the JWT and emails THAT account only,
+ * so the request body can't be used to spam or probe addresses. Fully
+ * best-effort: no session, no worker, or a failed send are all silently ignored
+ * — the alert is a nicety, never a gate on the password change.
+ */
+async function notifyPasswordChanged(): Promise<void> {
+  if (!EMAIL_OTP_URL) return;
+  let jwt: string;
+  try {
+    jwt = await mintJwt();
+  } catch {
+    return; // no session — nothing to notify against
+  }
+  try {
+    await fetch(`${EMAIL_OTP_URL}/password-changed`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jwt }),
+    });
+  } catch {
+    // best-effort — swallow network errors
+  }
+}
+
+/**
  * Send (or resend) a 6-digit verification code to `email`.
  * No account is required — this is called during signup before the account
  * exists. If a session happens to exist (the existing-user re-verify gate), we
@@ -327,13 +362,15 @@ export async function confirmEmailVerified(): Promise<void> {
 //
 // Same rationale as email verification: no Appwrite SMTP, so the worker owns the
 // code. Reset differs from signup in two ways the worker must handle:
-//   1. The email IS already registered (signup's /send rejects that), so reset
-//      gets its own /reset-send path that looks the account up by email.
+//   1. Reset targets an existing account, so /reset-send looks the account up by
+//      email. To avoid an account-existence oracle it replies with a neutral
+//      success either way, emailing a code only when the account is real.
 //   2. There's no session (the user is logged out and has forgotten their
 //      password), so the worker uses its admin Users API key to set the new
 //      password — the app never holds a session for this.
 // /reset is atomic (verify code + set password in one call) so no "proven"
-// window lingers for a sensitive operation.
+// window lingers for a sensitive operation. On success the worker also emails a
+// "password was changed" alert.
 
 /**
  * Whether the forgot-password flow is available. Reuses the OTP worker, so it's
@@ -344,9 +381,12 @@ export function passwordResetEnabled(): boolean {
 }
 
 /**
- * Send a password-reset code to an existing account's email. No session/JWT —
- * the worker's /reset-send path resolves the account by email and emails a code.
- * Throws AuthError on failure (e.g. no account with that email).
+ * Send a password-reset code to an account's email. No session/JWT — the
+ * worker's /reset-send path resolves the account by email and emails a code.
+ * Anti-enumeration: the worker returns a neutral success whether or not the
+ * address has an account, so a resolved promise here does NOT imply the account
+ * exists. Callers should proceed to the code-entry step regardless. Throws
+ * AuthError only on transport/validation failures.
  */
 export async function requestPasswordReset(email: string): Promise<void> {
   await postOtp(
@@ -385,6 +425,10 @@ export async function changePassword(
 ): Promise<void> {
   try {
     await account.updatePassword(newPassword, oldPassword);
+    // Best-effort "your password was changed" alert so an unexpected change is
+    // noticeable. Fire-and-forget — the change already succeeded; never fail or
+    // block on the email.
+    void notifyPasswordChanged();
   } catch (err) {
     if (err instanceof AppwriteException) {
       // Common errors with helpful messages:
@@ -438,7 +482,7 @@ export async function getCurrentUser(): Promise<User | null> {
       // Surface as null so the user is sent back through signup, or handle as you prefer.
       return null;
     }
-    return mapUserDoc(profile, me.emailVerification);
+    return mapUserDoc(profile, me.email ?? "", me.emailVerification);
   } catch (err) {
     if (err instanceof AppwriteException && err.code === 401) {
       return null; // not logged in — totally normal
@@ -590,7 +634,10 @@ async function loginWithOAuth(provider: OAuthProvider): Promise<OAuthResult> {
     );
     const doc = existing.documents[0] as unknown as UserDoc | undefined;
     if (doc) {
-      return { status: "authenticated", user: mapUserDoc(doc, me.emailVerification) };
+      return {
+        status: "authenticated",
+        user: mapUserDoc(doc, me.email ?? "", me.emailVerification),
+      };
     }
 
     const seed = me.email?.split("@")[0] || identity.name || "user";
@@ -640,7 +687,6 @@ export async function completeOAuthSignup(
       ID.unique(),
       {
         userId: me.$id,
-        email: me.email ?? "",
         username,
         displayName,
         // Provider photo URL (Google) used directly as the avatar; getAvatarUrl

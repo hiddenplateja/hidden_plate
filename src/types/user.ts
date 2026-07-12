@@ -2,6 +2,12 @@
 
 export interface User {
   id: string;
+  /**
+   * Only populated for the CURRENT user (sourced from the Appwrite Account,
+   * which only its owner can read). Users loaded from the users collection
+   * (other people's profiles, admin lists) have `""` here — the profile doc
+   * intentionally stores no email, since every signed-in user can read it.
+   */
   email: string;
   username: string;
   displayName: string;

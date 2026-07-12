@@ -20,7 +20,6 @@ interface UserDoc {
   $id: string;
   $createdAt: string;
   userId: string;
-  email: string;
   username: string;
   displayName: string;
   avatarUrl?: string | null;
@@ -31,7 +30,9 @@ interface UserDoc {
 function mapDoc(doc: UserDoc): User {
   return {
     id: doc.userId,
-    email: doc.email,
+    // Profile docs deliberately carry no email — they're readable by every
+    // signed-in user. The current user's email comes from the Account (auth.ts).
+    email: "",
     username: doc.username,
     displayName: doc.displayName,
     avatarUrl: doc.avatarUrl ?? null,

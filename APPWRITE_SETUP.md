@@ -27,9 +27,23 @@ replies, featured boosts, and the listing fee. All in your existing database.
 - `ownerId` (key, ASC) — for "your restaurants" / owner lookups
 - `listingPaidUntil` (key, ASC) — **required** for the discovery date-filter (`Query.or`)
 
-**Permissions:** no change for clients. The **admins team** needs **Update**
-(already set up for the admin console). The worker writes via its API key, which
-bypasses permissions.
+**Permissions:** The **admins team** needs **Create** (admin add + bulk import)
+and **Update** (admin console). The worker writes via its API key, which bypasses
+permissions.
+
+> **⚠️ Do NOT grant `Create` to the Users role.** User submissions now go through
+> the Cloudflare Worker (`POST /restaurant/submit`), which force-sets every trust
+> field (`isActive:false`, `isVerified:false`, `isFeatured:false`, `ownerId:null`,
+> `averageRating:0`, `reviewCount:0`, `addedBy` from the caller's JWT) with the
+> admin API key. If Users keep the `Create` grant, a tampered client can bypass
+> the worker and self-publish/verify/feature — the exact issue this closes. See
+> §15 below.
+>
+> The worker endpoint is live once `worker/` is deployed (`cd worker && npm run
+> deploy`); the app finds it from `EXPO_PUBLIC_EMAIL_OTP_URL`'s origin, so no new
+> env var is needed. If that URL is unset, `createRestaurant` falls back to a
+> direct client write (honest-client only) — so deploy the worker AND drop the
+> Users `Create` grant together.
 
 > Some of these (`ownerId`, `featuredUntil`) may already exist from earlier
 > phases — just add whatever's missing. `listingPaidUntil` + its index are new.
@@ -217,9 +231,11 @@ skip our code). Real enforcement lives in only two places:
 
 **A. Cloudflare Worker (OTP/email) — already in code, ships on `wrangler deploy`.**
 - Per-IP limits via the Workers Rate Limiting API (`ratelimits` in `wrangler.jsonc`):
-  `/email/send` **5/min**, `/email/verify` **10/min**, `/email/confirm` **10/min** per IP.
+  `/email/send` **5/min**, `/email/verify` **10/min**, `/email/confirm` **10/min**,
+  `/restaurant/submit` **3/min** per IP.
   This stops a single IP rotating through many addresses to email-bomb inboxes or burn Resend
-  quota — the per-*email* cooldown alone couldn't.
+  quota — the per-*email* cooldown alone couldn't. The submit cap stops a scripted client
+  (even one holding a valid JWT) from flooding the admin queue with pending restaurants.
 - Plus, per email: a 30s resend cooldown, a 5 wrong-guess attempt cap, and code expiry.
 - Nothing to configure in Appwrite for these.
 
@@ -437,14 +453,15 @@ key** so it can write counters the caller doesn't own, read other users' push
 tokens, and fan out broadcasts. The app calls it via
 `functions.createExecution` from `src/services/notificationTriggers.ts`.
 
-It has four modes, selected by the payload:
+It has five modes, selected by the payload:
 
 | Mode | Trigger | Who calls it |
 |---|---|---|
-| **Single-recipient — USER** | default (no `broadcast`/`moderation` flag) + signed-in caller | the app (like / comment / follow) |
+| **Single-recipient — USER** | default (no `broadcast`/`moderation`/`editReview` flag) + signed-in caller | the app (like / comment / follow) |
 | **Single-recipient — ADMIN** | default + valid `adminSecret` | you, from the Console / a trusted backend |
 | **Broadcast** | `broadcast: true` + valid `adminSecret` | admin announcements |
 | **Moderation** | `moderation: true` | report-threshold auto-hide |
+| **Review edit** | `editReview: true` + signed-in caller | the app (author edits their own review) |
 
 ### Deploy + configure
 
@@ -496,6 +513,16 @@ it (until set, the app logs a warning and skips dispatch).
   `title`/`body`/`actorId` are trusted verbatim (still URL-filtered). Use it
   only from trusted places (the Console, a server), never ship the secret in
   the app.
+- **Review edits are ownership-gated and field-whitelisted.** Because Appwrite
+  document permissions are all-or-nothing, the `reviews` collection grants its
+  author **no** direct `update` permission — a direct grant would also let a
+  tampered client flip `isHidden` (reversing a moderation auto-hide) or inflate
+  `likeCount`/`commentCount`. Authors edit through the `editReview` path
+  instead: the Function verifies the caller owns the review (via the
+  `x-appwrite-user-id` header), re-validates the input (rating range, comment
+  length, link rejection, ≤6 images), and writes **only** `rating` / `comment` /
+  `imageIds` / `isEdited`. Moderation and counter fields can never be set from
+  the payload.
 
 ### JSON payloads by notification type
 
@@ -595,6 +622,27 @@ real report counts):
 { "moderation": true, "reviewId": "<reviewId>" }
 ```
 
+**Review edit — author updates their own review's content** (signed-in caller;
+the Function verifies ownership and writes only the whitelisted fields). Send
+only the fields being changed:
+```json
+{
+  "editReview": true,
+  "reviewId": "<reviewId>",
+  "rating": 4,
+  "comment": "Updated my thoughts after a second visit.",
+  "imageIds": ["<fileId>"]
+}
+```
+> ⚠️ **Migration for the `reviews` collection.** New reviews are created with
+> **no author `update` permission** (`src/services/reviews.ts`). Existing review
+> documents created before this change still carry a stale
+> `update("user:<author>")` grant, so their authors can still bypass the
+> Function. Strip it: run a one-off script (or the Console) over the `reviews`
+> collection setting each doc's permissions to `read("users")` +
+> `delete("user:<author>")` only. Docs also self-heal the next time their author
+> edits them (the `editReview` path re-asserts the hardened permission set).
+
 > Title/body in every path are rejected if they contain a URL (links are
 > stripped from notifications by design). `data` is not URL-filtered — keep
 > deep-link params there, not in the visible text.
@@ -643,6 +691,53 @@ call):
 ```json
 { "manageToken": "clear" }
 ```
+
+---
+
+## 16. Restaurant submissions go through the worker (trust-field gatekeeper)
+
+User-submitted restaurants are created by the Cloudflare Worker, not the client,
+so the moderation/trust fields can't be forged. Implemented in
+`worker/src/index.ts` as **`POST /restaurant/submit`**:
+
+1. Verifies the caller's Appwrite **JWT** (relayed by the app). No session → 401.
+2. Re-validates name / address / parish / coordinates.
+3. Creates the doc with the **admin API key**, force-setting `isActive:false`,
+   `isVerified:false`, `isFeatured:false`, `ownerId:null`, `averageRating:0`,
+   `reviewCount:0`, and `addedBy` = the JWT's user id — overriding anything the
+   client sent. Per-doc perms: `read("users")`, `delete("user:<caller>")`.
+
+**To activate the enforcement (both steps needed):**
+1. Deploy the worker: `cd worker && npm run deploy`.
+2. In the Appwrite console, **remove `Create` from the Users role** on the
+   `restaurants` collection (keep **admins team → Create/Update**). This is what
+   forces submissions through the worker; without it the direct client path is
+   still open.
+
+The worker key already has `documents.read` + `documents.write` (§7), so no new
+scopes. The app derives the endpoint from `EXPO_PUBLIC_EMAIL_OTP_URL`'s origin —
+no new env var. Admin "Add restaurant" + bulk import still write client-side
+(admins-team Create grant); only public submissions are gated. If the worker URL
+is unset, `createRestaurant` falls back to a direct client write (honest-client
+only), so deploy the worker AND drop the Users `Create` grant together.
+
+---
+
+## `users` collection — no `email` attribute (PII hardening)
+
+Profile docs are readable by **every signed-in user** (per-doc
+`read("users")`), so anything stored on them is effectively public to the
+whole user base. The app therefore stores **no email on the profile doc** —
+the address lives only on the Appwrite **Account**, which only its owner (and
+the server API key) can read. The current user's email in the UI comes from
+`account.get()` (`mapUserDoc` in `src/services/auth.ts`); users loaded from
+the collection (`src/services/users.ts`) have `email: ""`.
+
+**Migration (one-time, do together with shipping this app version):** in the
+Appwrite console, **delete the `email` attribute from the `users` collection**.
+This both wipes the addresses already sitting in existing docs and keeps new
+signups working (older builds that still send `email` will fail to sign up
+once the attribute is gone — fine pre-launch, coordinate if already shipped).
 
 ---
 
@@ -695,32 +790,48 @@ the `EMAIL_OTPS_COLLECTION_ID`, `RESEND_FROM`, `OTP_TTL_MINUTES` config, the
 
 Why dedicated endpoints rather than reusing `/send` + `/verify`:
 - `/send` *rejects* already-registered emails when there's no JWT — the exact
-  reset case (logged-out user with an existing account). `/reset-send` does the
-  opposite: it *requires* the email to exist.
+  reset case (logged-out user with an existing account). `/reset-send` targets
+  an existing account instead (but never reveals whether one exists — see below).
 - The user has no session, so the worker sets the password with its **admin
   Users API key** — the app never holds a session for this.
 
 **`POST /email/reset-send`** — body `{ email }`
-1. Resolve the Appwrite account by email (admin Users API). If none exists,
-   returns `404 { message: "No account found with that email." }` — this matches
-   the rest of the app's messaging; the per-IP `RL_EMAIL_SEND` limiter back-stops
-   enumeration abuse. (Switch to a silent `200` here if you prefer strict
-   non-enumeration.)
+1. Resolve the Appwrite account by email (admin Users API). **Anti-enumeration:**
+   the response is always a neutral `200 { ok: true }` — if no account exists the
+   worker returns that same success **without emailing or storing anything**, so a
+   probe can't distinguish a registered address from an unregistered one. (Signup's
+   `/email/send` deliberately keeps its "already registered" 409 for UX; reset
+   stays neutral because it targets confirmed accounts.) Per-IP `RL_EMAIL_SEND`
+   still back-stops bulk probing.
 2. Generates a 6-digit code, stores its **hash** + attempt counter in
    `EMAIL_OTPS_COLLECTION_ID` keyed by the email hash, TTL `OTP_TTL_MINUTES`.
 3. Emails the code via Resend from `RESEND_FROM` (reset-specific copy).
 4. 30s per-email cooldown + per-IP rate limit.
-Returns `200 { ok: true }` on success, `4xx { message }` on failure.
+Returns `200 { ok: true }` whether or not the account exists.
 
 **`POST /email/reset`** — body `{ email, code, password }` (atomic verify + set)
-1. Validates `password` (length ≥ 8) server-side too.
+1. Validates `password` against the shared policy server-side: **≥ 10 chars, not
+   all-numeric, not a common password** (`validatePassword` in
+   `worker/src/index.ts`; the client mirrors it in
+   `src/utils/passwordPolicy.ts` — keep the two in sync).
 2. Looks up the stored OTP; compares hashes, checks TTL + attempt cap. On
    mismatch increments attempts and returns `400 { message: "Incorrect code…" }`.
 3. On match: re-resolves the account by email and calls admin
    `PATCH /users/{userId}/password`.
 4. Consumes the code (deletes the OTP doc) so it can't be replayed.
+5. Emails a best-effort **"your password was changed"** alert (Resend) so a reset
+   the real owner didn't initiate is noticeable.
 Returns `200 { ok: true }` on success, `4xx { message }` on failure. Keeping
 verify+set in one call means no "proven" window lingers for a password change.
+
+**`POST /email/password-changed`** — body `{ jwt }` (in-app change alert)
+The in-app "change password" flow writes the new password client-side via the
+Appwrite SDK (it needs the OLD password), so the worker's only job is the alert
+email. Authenticated by the caller's **JWT**; the email goes to the account's own
+address resolved from the token, **never** a body-supplied one — so this can't be
+used to spam arbitrary addresses or probe for accounts. Always returns a neutral
+`200 { ok: true }` (the email is best-effort). Reuses `RL_EMAIL_SEND`. Called from
+`changePassword` in `src/services/auth.ts`, fire-and-forget.
 
 ---
 

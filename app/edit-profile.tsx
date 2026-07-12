@@ -16,7 +16,7 @@
 //   pick → compress (600px wide, 0.75 quality) → upload → save profile doc
 //   → delete old avatar (best-effort, ignored if it fails)
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Camera, Lock } from "lucide-react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
@@ -449,11 +449,7 @@ export default function EditProfileScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Change avatar"
               >
-                <MaterialCommunityIcons
-                  name="camera"
-                  size={18}
-                  color={colors.white}
-                />
+                <Camera size={17} color={colors.onPrimary} strokeWidth={2} />
               </Pressable>
             </View>
 
@@ -490,11 +486,7 @@ export default function EditProfileScreen() {
               <>
                 <View style={styles.readOnlyInput}>
                   <Text style={styles.readOnlyText}>@{profile.username}</Text>
-                  <MaterialCommunityIcons
-                    name="lock-outline"
-                    size={16}
-                    color={colors.textMuted}
-                  />
+                  <Lock size={15} color={colors.textMuted} strokeWidth={2} />
                 </View>
                 <Text style={styles.hint}>
                   You can change your username again in{" "}
@@ -544,11 +536,7 @@ export default function EditProfileScreen() {
               <>
                 <View style={styles.readOnlyInput}>
                   <Text style={styles.readOnlyText}>{profile.displayName}</Text>
-                  <MaterialCommunityIcons
-                    name="lock-outline"
-                    size={16}
-                    color={colors.textMuted}
-                  />
+                  <Lock size={15} color={colors.textMuted} strokeWidth={2} />
                 </View>
                 <Text style={styles.hint}>
                   You can change your display name again in{" "}
@@ -622,16 +610,13 @@ export default function EditProfileScreen() {
             )}
           </View>
 
-          {/* Read-only email */}
+          {/* Read-only email — from the auth user (Account), not the profile
+              doc; the doc carries no email since it's readable by all users. */}
           <View style={styles.field}>
             <Text style={styles.label}>Email</Text>
             <View style={styles.readOnlyInput}>
-              <Text style={styles.readOnlyText}>{profile.email}</Text>
-              <MaterialCommunityIcons
-                name="lock-outline"
-                size={16}
-                color={colors.textMuted}
-              />
+              <Text style={styles.readOnlyText}>{user?.email || "—"}</Text>
+              <Lock size={15} color={colors.textMuted} strokeWidth={2} />
             </View>
             <Text style={styles.hint}>
               To change your email, contact support.

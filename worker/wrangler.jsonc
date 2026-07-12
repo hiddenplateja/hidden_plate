@@ -52,5 +52,8 @@
 		{ "name": "RL_EMAIL_SEND", "namespace_id": "1001", "simple": { "limit": 5, "period": 60 } },
 		{ "name": "RL_EMAIL_VERIFY", "namespace_id": "1002", "simple": { "limit": 10, "period": 60 } },
 		{ "name": "RL_EMAIL_CONFIRM", "namespace_id": "1003", "simple": { "limit": 10, "period": 60 } },
+		// Restaurant submissions: rare action for a real user; caps queue-flooding
+		// from a scripted client even when it holds a valid JWT.
+		{ "name": "RL_RESTAURANT_SUBMIT", "namespace_id": "1004", "simple": { "limit": 3, "period": 60 } },
 	],
 }

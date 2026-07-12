@@ -38,10 +38,12 @@ export interface Env {
 	REVENUECAT_WEBHOOK_AUTH: string;
 	RESEND_API_KEY: string;
 	// Rate limiters (wrangler.jsonc `ratelimits`). Per-IP, per-minute caps on the
-	// email/OTP endpoints. `RateLimit` is a built-in Workers runtime type.
+	// email/OTP + restaurant-submit endpoints. `RateLimit` is a built-in Workers
+	// runtime type.
 	RL_EMAIL_SEND: RateLimit;
 	RL_EMAIL_VERIFY: RateLimit;
 	RL_EMAIL_CONFIRM: RateLimit;
+	RL_RESTAURANT_SUBMIT: RateLimit;
 }
 
 type ProductKind = "feature" | "listing";
@@ -100,6 +102,15 @@ export default {
 			}
 			if (url.pathname === "/email/reset" && request.method === "POST") {
 				return handleResetPassword(request, env);
+			}
+			if (
+				url.pathname === "/email/password-changed" &&
+				request.method === "POST"
+			) {
+				return handlePasswordChangedNotice(request, env);
+			}
+			if (url.pathname === "/restaurant/submit" && request.method === "POST") {
+				return handleRestaurantSubmit(request, env);
 			}
 			return text("Not found", 404);
 		} catch (err) {
@@ -589,10 +600,16 @@ async function handleConfirmOtp(request: Request, env: Env): Promise<Response> {
 }
 
 // ── /email/reset-send ───────────────────────────────────────────────
-// Password reset, step 1. Unlike /email/send (signup), this REQUIRES the email
-// to already have an account — and there's no session, so we resolve the account
-// with the admin Users API. Emails a 6-digit code stored exactly like a verify
-// code (same collection + schema), keyed by the email. Reuses RL_EMAIL_SEND.
+// Password reset, step 1. Reset only makes sense for an email that already has
+// an account — there's no session, so we resolve the account with the admin
+// Users API. Emails a 6-digit code stored exactly like a verify code (same
+// collection + schema), keyed by the email. Reuses RL_EMAIL_SEND.
+//
+// Anti-enumeration: the response is ALWAYS a neutral success. If the address
+// has no account we return the same { ok: true } without sending anything, so a
+// probe can't tell a registered address from an unregistered one. (Signup's
+// /email/send deliberately keeps its "already registered" message — see the
+// note there — but reset targets confirmed accounts, so it stays neutral.)
 async function handleResetSend(request: Request, env: Env): Promise<Response> {
 	const limited = await enforceRateLimit(env.RL_EMAIL_SEND, request);
 	if (limited) return limited;
@@ -608,12 +625,12 @@ async function handleResetSend(request: Request, env: Env): Promise<Response> {
 		return json({ message: "Enter a valid email address." }, 400);
 	}
 
-	// Reset only makes sense for an existing account. Revealing this (rather than
-	// a silent 200) matches the rest of the app's messaging and gives immediate
-	// feedback; the per-IP rate limit back-stops enumeration abuse.
+	// Unregistered address → return the SAME neutral success without sending or
+	// storing anything. The client shows its "if an account exists, we've sent a
+	// code" screen either way, so this leaks nothing about account existence.
 	const user = await getUserByEmail(env, email);
 	if (!user) {
-		return json({ message: "No account found with that email." }, 404);
+		return json({ ok: true });
 	}
 
 	const key = await emailKey(email);
@@ -691,8 +708,9 @@ async function handleResetPassword(
 	if (!/^\d{6}$/.test(code)) {
 		return json({ message: "Enter the 6-digit code." }, 400);
 	}
-	if (password.length < 8) {
-		return json({ message: "Password must be at least 8 characters." }, 400);
+	const pwError = validatePassword(password);
+	if (pwError) {
+		return json({ message: pwError }, 400);
 	}
 
 	const key = await emailKey(email);
@@ -726,7 +744,129 @@ async function handleResetPassword(
 	await appwriteDeleteDocument(env, env.EMAIL_OTPS_COLLECTION_ID, key).catch(
 		() => {},
 	);
+	// Heads-up email so a reset the real owner didn't initiate is noticeable.
+	// Best-effort — the reset already succeeded, so never fail the response on it.
+	await sendPasswordChangedEmail(env, email);
 	return json({ ok: true });
+}
+
+// ── /email/password-changed ─────────────────────────────────────────
+// "Your password was changed" alert for the IN-APP change flow. That password
+// write happens client-side via the Appwrite SDK (it needs the OLD password),
+// so the worker's only job here is the heads-up email. Authenticated by the
+// caller's JWT and sent to the account's OWN email (resolved from the token,
+// never the request body) — so this can't be used to spam arbitrary addresses
+// or probe for accounts. Always returns a neutral success; the email is
+// best-effort. Reuses RL_EMAIL_SEND.
+async function handlePasswordChangedNotice(
+	request: Request,
+	env: Env,
+): Promise<Response> {
+	const limited = await enforceRateLimit(env.RL_EMAIL_SEND, request);
+	if (limited) return limited;
+
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return json({ message: "Bad request." }, 400);
+	}
+	const jwt: string | undefined = body?.jwt;
+	if (!jwt) return json({ message: "Missing session token." }, 401);
+
+	const account = await appwriteGetAccount(env, jwt);
+	if (!account) {
+		return json({ message: "Your session expired. Sign in again." }, 401);
+	}
+
+	const email = normalizeEmail(String(account.email ?? ""));
+	if (isValidEmail(email)) {
+		await sendPasswordChangedEmail(env, email);
+	}
+	return json({ ok: true });
+}
+
+// ── /restaurant/submit ──────────────────────────────────────────────
+// Trusted create path for user-submitted restaurants. The `restaurants`
+// collection must NOT grant Create to the Users role — only this worker's
+// admin API key + the admins team. We force every trust field so a tampered
+// client can't self-publish, self-verify, self-feature, self-own, or fake
+// ratings. Identity comes from the caller's Appwrite JWT (for addedBy + the
+// per-doc delete grant), never the request body.
+async function handleRestaurantSubmit(
+	request: Request,
+	env: Env,
+): Promise<Response> {
+	// Per-IP cap — a legit user submits a spot every now and then; a scripted
+	// client (even with a valid JWT) shouldn't be able to flood the admin queue.
+	const limited = await enforceRateLimit(env.RL_RESTAURANT_SUBMIT, request);
+	if (limited) return limited;
+
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return json({ message: "Bad request." }, 400);
+	}
+
+	const jwt: string | undefined = body?.jwt;
+	if (!jwt) return json({ message: "Missing session token." }, 401);
+	const account = await appwriteGetAccount(env, jwt);
+	if (!account) {
+		return json({ message: "Your session expired. Sign in again." }, 401);
+	}
+	const userId = String(account.$id);
+
+	const data = body?.data;
+	if (!data || typeof data !== "object") {
+		return json({ message: "Missing restaurant details." }, 400);
+	}
+
+	// Light server-side validation (the app validates too; this is the boundary).
+	const name = typeof data.name === "string" ? data.name.trim() : "";
+	const address = typeof data.address === "string" ? data.address.trim() : "";
+	const lat = Number(data.latitude);
+	const lng = Number(data.longitude);
+	if (name.length < 2) {
+		return json({ message: "Please enter the restaurant's name." }, 400);
+	}
+	if (!address) return json({ message: "Please enter the address." }, 400);
+	if (!data.parish) return json({ message: "Please choose a parish." }, 400);
+	if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) {
+		return json({ message: "Please set the location on the map." }, 400);
+	}
+
+	// Spread the client fields, then FORCE the trust fields — these overrides
+	// win regardless of what the client sent.
+	const doc = {
+		...data,
+		isActive: false,
+		isVerified: false,
+		isFeatured: false,
+		ownerId: null,
+		averageRating: 0,
+		reviewCount: 0,
+		addedBy: userId,
+	};
+
+	try {
+		const created = await appwriteCreateDocument(
+			env,
+			env.RESTAURANTS_COLLECTION_ID,
+			doc,
+			[`read("users")`, `delete("user:${userId}")`],
+		);
+		if (created === "conflict") {
+			return json({ message: "Duplicate submission — try again." }, 409);
+		}
+		return json({ ok: true, document: created });
+	} catch (err) {
+		// Surface the Appwrite error text so the app can detect a missing
+		// optional attribute (e.g. searchText) and retry without it.
+		const message =
+			err instanceof Error ? err.message : "Couldn't submit this restaurant.";
+		return json({ message }, 400);
+	}
 }
 
 // Verify a user JWT → their account (incl. email + emailVerification).
@@ -762,6 +902,86 @@ async function markEmailVerified(env: Env, userId: string): Promise<boolean> {
 
 // Admin Users API — set a new password for the account. Needs the API key to
 // have users.write scope (same key as markEmailVerified). Appwrite hashes it.
+// Password policy for any NEWLY SET password (reset here; the app mirrors this
+// for signup + in-app change in src/utils/passwordPolicy.ts). NOT applied to
+// login, which must accept whatever a user already has. Returns a user-facing
+// error message, or null when the password is acceptable. Keep the rules and
+// the common-password list in sync with the client copy.
+const PASSWORD_MIN_LENGTH = 10;
+const COMMON_PASSWORDS = new Set([
+	"password",
+	"password1",
+	"password12",
+	"password123",
+	"passw0rd123",
+	"1234567890",
+	"12345678910",
+	"qwertyuiop",
+	"qwerty12345",
+	"iloveyou123",
+	"welcome123",
+	"letmein123",
+	"admin12345",
+	"changeme123",
+	"hiddenplate",
+	"0000000000",
+	"1111111111",
+]);
+function validatePassword(password: string): string | null {
+	if (password.length < PASSWORD_MIN_LENGTH) {
+		return `Password must be at least ${PASSWORD_MIN_LENGTH} characters.`;
+	}
+	if (/^\d+$/.test(password)) {
+		return "Choose a password that isn't only numbers.";
+	}
+	if (COMMON_PASSWORDS.has(password.toLowerCase())) {
+		return "That password is too common — choose a stronger one.";
+	}
+	return null;
+}
+
+// Best-effort "your password was changed" alert. Sent after a completed reset
+// and after an in-app change, so an unexpected change is noticeable (an early
+// signal of account takeover). Never throws — the password change already
+// succeeded; a failed email must not surface as an error.
+async function sendPasswordChangedEmail(env: Env, to: string): Promise<void> {
+	try {
+		const res = await fetch("https://api.resend.com/emails", {
+			method: "POST",
+			headers: {
+				authorization: `Bearer ${env.RESEND_API_KEY}`,
+				"content-type": "application/json",
+			},
+			body: JSON.stringify({
+				from: env.RESEND_FROM,
+				to: [to],
+				subject: "Your Hidden Plate password was changed",
+				text: "Your Hidden Plate password was just changed. If this was you, no action is needed. If you didn't change it, reset your password immediately to secure your account.",
+				html: passwordChangedEmailHtml(),
+			}),
+		});
+		if (!res.ok) {
+			console.error(
+				"password-changed email failed",
+				res.status,
+				await res.text(),
+			);
+		}
+	} catch (err) {
+		console.error("password-changed email error", err);
+	}
+}
+
+function passwordChangedEmailHtml(): string {
+	return `<!doctype html><html><body style="margin:0;background:#f6f6f7;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px;">
+<table role="presentation" width="100%" style="max-width:440px;background:#ffffff;border-radius:16px;padding:32px;">
+<tr><td style="font-size:20px;font-weight:800;color:#111;padding-bottom:8px;">Hidden Plate</td></tr>
+<tr><td style="font-size:15px;color:#555;line-height:22px;padding-bottom:8px;">Your password was just changed.</td></tr>
+<tr><td style="font-size:14px;color:#777;line-height:21px;">If this was you, you're all set — no action needed. If you didn't change it, reset your password immediately to secure your account.</td></tr>
+</table></td></tr></table></body></html>`;
+}
+
 async function updateUserPassword(
 	env: Env,
 	userId: string,
