@@ -8,7 +8,14 @@
 //
 // Swipe-right-to-left reveals a Delete action.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import {
+  Heart,
+  MessageCircle,
+  Trash2,
+  UserPlus,
+  UtensilsCrossed,
+  type LucideIcon,
+} from "lucide-react-native";
 import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
 import { Swipeable } from "react-native-gesture-handler";
 
@@ -25,17 +32,24 @@ interface NotificationItemProps {
   actor: User | null;
   onPress: (notification: AppNotification) => void;
   onDelete: (id: string) => void;
+  /**
+   * When set, replaces the notification's own body — used for aggregated rows
+   * ("Jose and 5 others liked your post"). The avatar still shows the most
+   * recent actor.
+   */
+  overrideBody?: string;
 }
 
-// Per-type badge icon + color.
+// Per-type badge icon + color. Fixed accent hues (not theme tokens) so the
+// social color-coding reads the same in both themes.
 const TYPE_BADGE: Record<
   NotificationType,
-  { icon: keyof typeof MaterialCommunityIcons.glyphMap; color: string }
+  { icon: LucideIcon; color: string }
 > = {
-  follow: { icon: "account-plus", color: "#E94B3C" },
-  like: { icon: "heart", color: "#EF4444" },
-  comment: { icon: "comment-text", color: "#3B82F6" },
-  new_restaurant: { icon: "silverware-fork-knife", color: "#10B981" },
+  follow: { icon: UserPlus, color: "#6366F1" },
+  like: { icon: Heart, color: "#EF4444" },
+  comment: { icon: MessageCircle, color: "#3B82F6" },
+  new_restaurant: { icon: UtensilsCrossed, color: "#10B981" },
 };
 
 function timeAgo(iso: string): string {
@@ -58,6 +72,7 @@ export function NotificationItem({
   actor,
   onPress,
   onDelete,
+  overrideBody,
 }: NotificationItemProps) {
   const badge = TYPE_BADGE[notification.type] ?? TYPE_BADGE.follow;
   const hasActor = !!notification.actorId;
@@ -82,11 +97,7 @@ export function NotificationItem({
         accessibilityLabel="Delete notification"
       >
         <Animated.View style={{ transform: [{ scale }] }}>
-          <MaterialCommunityIcons
-            name="trash-can-outline"
-            size={22}
-            color={colors.textInverse}
-          />
+          <Trash2 size={21} color={colors.textInverse} strokeWidth={2} />
         </Animated.View>
       </Pressable>
     );
@@ -110,22 +121,14 @@ export function NotificationItem({
                 size={48}
               />
               <View style={[styles.badge, { backgroundColor: badge.color }]}>
-                <MaterialCommunityIcons
-                  name={badge.icon}
-                  size={11}
-                  color="#FFFFFF"
-                />
+                <badge.icon size={11} color="#FFFFFF" strokeWidth={2.5} />
               </View>
             </>
           ) : (
             <View
               style={[styles.typeTile, { backgroundColor: `${badge.color}22` }]}
             >
-              <MaterialCommunityIcons
-                name={badge.icon}
-                size={22}
-                color={badge.color}
-              />
+              <badge.icon size={20} color={badge.color} strokeWidth={2} />
             </View>
           )}
         </View>
@@ -133,7 +136,7 @@ export function NotificationItem({
         {/* Message */}
         <View style={styles.body}>
           <Text style={styles.message} numberOfLines={2}>
-            {notification.body}
+            {overrideBody ?? notification.body}
           </Text>
         </View>
 

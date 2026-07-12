@@ -2,8 +2,8 @@
 // Signup landing — pick a method: Apple / Google (wired later) or email.
 // Email kicks off the verify-first wizard (email → OTP → profile).
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Link, useRouter, type Href } from "expo-router";
+import { Mail } from "lucide-react-native";
 import { useState } from "react";
 import { Alert, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -83,11 +83,7 @@ export default function SignupLandingScreen() {
             label="Continue with email"
             onPress={() => router.push("/(auth)/signup-email")}
             leftIcon={
-              <MaterialCommunityIcons
-                name="email-outline"
-                size={20}
-                color={colors.white}
-              />
+              <Mail size={19} color={colors.onPrimary} strokeWidth={2} />
             }
           />
         </View>
@@ -109,7 +105,7 @@ function makeStyles(c: ThemeColors) {
     safe: { flex: 1, backgroundColor: colors.cardBackground },
     content: {
       flex: 1,
-      paddingHorizontal: spacing.xl,
+      paddingHorizontal: spacing.lg,
       paddingTop: spacing.xxxl,
       paddingBottom: spacing.xl,
       justifyContent: "space-between",
@@ -126,8 +122,6 @@ function makeStyles(c: ThemeColors) {
       fontSize: T.size.sm,
       color: colors.textMuted,
       marginHorizontal: spacing.md,
-      textTransform: "uppercase",
-      letterSpacing: T.tracking.wider,
     },
     footer: {
       flexDirection: "row",

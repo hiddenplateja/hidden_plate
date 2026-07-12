@@ -23,7 +23,12 @@ import {
   Role,
 } from "react-native-appwrite";
 
-import { account, appwriteConfig, databases } from "@/services/appwrite";
+import {
+  account,
+  appwriteConfig,
+  databases,
+  functions,
+} from "@/services/appwrite";
 import { captureError } from "@/services/sentry";
 import type {
   CreateReviewInput,
@@ -423,8 +428,13 @@ export async function createReview(input: CreateReviewInput): Promise<Review> {
         isHidden: false,
       },
       [
+        // NO Permission.update for the author. Appwrite document permissions
+        // are all-or-nothing across fields, so granting the owner update would
+        // also let a modified client flip isHidden (reversing a moderation
+        // auto-hide) or inflate likeCount / commentCount. Edits are routed
+        // through the send-notification Function's `editReview` action instead,
+        // which verifies ownership and only writes whitelisted content fields.
         Permission.read(Role.users()),
-        Permission.update(Role.user(me.$id)),
         Permission.delete(Role.user(me.$id)),
       ],
     );
@@ -446,20 +456,39 @@ export async function updateReview(
 ): Promise<Review> {
   validateReviewInput(input);
 
+  // Authors have no direct update permission on their review doc (see
+  // createReview). The edit is applied server-side by the send-notification
+  // Function, which re-verifies ownership + validation and writes only the
+  // whitelisted content fields — never isHidden or the counters.
   try {
-    const updates: Record<string, unknown> = { isEdited: true };
-    if (input.rating !== undefined) updates.rating = input.rating;
-    if (input.comment !== undefined) updates.comment = input.comment;
-    if (input.imageIds !== undefined) updates.imageIds = input.imageIds;
+    const execution = await functions.createExecution({
+      functionId: appwriteConfig.functions.sendNotification,
+      body: JSON.stringify({
+        editReview: true,
+        reviewId,
+        // Only forward fields the caller actually changed; `undefined` values
+        // are dropped by JSON.stringify so the server leaves them untouched.
+        rating: input.rating,
+        comment: input.comment,
+        imageIds: input.imageIds,
+      }),
+      async: false, // synchronous — we need the updated doc back
+    });
 
-    const doc = await databases.updateDocument(
-      appwriteConfig.databaseId,
-      appwriteConfig.collections.reviews,
-      reviewId,
-      updates,
-    );
-    return mapDoc(doc as unknown as ReviewDoc);
+    let parsed: { success?: boolean; error?: string; review?: ReviewDoc };
+    try {
+      parsed = JSON.parse(execution.responseBody || "{}");
+    } catch {
+      throw new ReviewError("Failed to update review.");
+    }
+
+    if (!parsed.success || !parsed.review) {
+      throw new ReviewError(parsed.error || "Failed to update review.");
+    }
+
+    return mapDoc(parsed.review);
   } catch (err) {
+    if (err instanceof ReviewError) throw err;
     captureError(err, {
       service: "reviews",
       op: "updateReview",

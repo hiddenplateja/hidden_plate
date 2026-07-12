@@ -2,7 +2,7 @@
 // Tab strip used on profile screens to switch between:
 //   - reviews ("all"): the user's own reviews
 //   - likes:           reviews the user has liked
-//   - saved:           restaurants the user has saved  (own profile only)
+//   - lists:           the user's collections
 //
 // Icon + label tabs with an active underline indicator. The bar has clear
 // breathing room above it (from the header's bottom padding) and a single
@@ -10,58 +10,55 @@
 // with the stats above or the first review card below (the parent adds a
 // spacer beneath this bar so the first card doesn't jam the hairline).
 //
-// Saved is private (per-doc Read scoped to the owner only), so the tab is
-// hidden entirely when viewing someone else's profile.
+// Saved lives on its own bottom-nav tab — it's intentionally NOT a profile
+// tab (it used to be; removed to keep the profile focused on public content).
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import {
+  Heart,
+  LayoutGrid,
+  Library,
+  type LucideIcon,
+} from "lucide-react-native";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { fonts, radius, spacing, typographyTokens as T } from "@/theme/colors";
 import type { ThemeColors } from "@/theme/themes";
 import { useThemedStyles } from "@/theme/useThemedStyles";
 
-export type ProfileContentTab = "all" | "likes" | "lists" | "saved";
+export type ProfileContentTab = "all" | "likes" | "lists";
 
 interface ProfileContentTabsProps {
   active: ProfileContentTab;
   onChange: (tab: ProfileContentTab) => void;
-  /**
-   * When false, the Saved tab is hidden. Other users' saved lists are
-   * private by design — the data layer enforces this too.
-   */
-  isOwn?: boolean;
   /** When false, the Lists (Collections) tab is hidden (feature disabled). */
   showLists?: boolean;
 }
 
 interface TabSpec {
   id: ProfileContentTab;
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: LucideIcon;
   label: string;
 }
 
 const ALL_TABS: TabSpec[] = [
-  { id: "all", icon: "grid", label: "Reviews" },
-  { id: "likes", icon: "heart-outline", label: "Likes" },
-  { id: "lists", icon: "bookmark-multiple-outline", label: "Lists" },
-  { id: "saved", icon: "bookmark-outline", label: "Saved" },
+  { id: "all", icon: LayoutGrid, label: "Reviews" },
+  { id: "likes", icon: Heart, label: "Likes" },
+  { id: "lists", icon: Library, label: "Lists" },
 ];
 
 export function ProfileContentTabs({
   active,
   onChange,
-  isOwn = true,
   showLists = true,
 }: ProfileContentTabsProps) {
-  const tabs = ALL_TABS.filter(
-    (t) => (t.id !== "saved" || isOwn) && (t.id !== "lists" || showLists),
-  );
+  const tabs = ALL_TABS.filter((t) => t.id !== "lists" || showLists);
   const { styles, colors } = useThemedStyles(makeStyles);
 
   return (
     <View style={styles.bar}>
       {tabs.map((tab) => {
         const isActive = active === tab.id;
+        const Icon = tab.icon;
         return (
           <Pressable
             key={tab.id}
@@ -73,10 +70,10 @@ export function ProfileContentTabs({
             hitSlop={4}
           >
             <View style={styles.tabInner}>
-              <MaterialCommunityIcons
-                name={tab.icon}
-                size={19}
+              <Icon
+                size={17}
                 color={isActive ? colors.primary : colors.textMuted}
+                strokeWidth={isActive ? 2.4 : 2}
               />
               <Text style={[styles.label, isActive && styles.labelActive]}>
                 {tab.label}

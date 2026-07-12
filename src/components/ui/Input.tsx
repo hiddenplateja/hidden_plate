@@ -9,7 +9,7 @@
 //  - error and helperText are mutually exclusive (error wins)
 //  - password fields (secureTextEntry) get an eye toggle to reveal/hide
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Eye, EyeOff } from "lucide-react-native";
 import { forwardRef, useState } from "react";
 import {
     Pressable,
@@ -73,11 +73,11 @@ export const Input = forwardRef<TextInput, InputProps>(function Input(
             accessibilityRole="button"
             accessibilityLabel={hidden ? "Show password" : "Hide password"}
           >
-            <MaterialCommunityIcons
-              name={hidden ? "eye-outline" : "eye-off-outline"}
-              size={22}
-              color={colors.textMuted}
-            />
+            {hidden ? (
+              <Eye size={21} color={colors.textMuted} strokeWidth={1.8} />
+            ) : (
+              <EyeOff size={21} color={colors.textMuted} strokeWidth={1.8} />
+            )}
           </Pressable>
         ) : null}
       </View>
@@ -98,31 +98,32 @@ function makeStyles(c: ThemeColors) {
     marginBottom: spacing.md,
   },
   label: {
-    fontFamily: fonts.medium,
+    fontFamily: fonts.bold,
     fontSize: T.size.sm,
-    color: colors.textSecondary,
-    marginBottom: spacing.xs,
+    color: colors.textPrimary,
+    marginBottom: spacing.xs + 2,
   },
   field: {
     position: "relative",
     justifyContent: "center",
   },
   input: {
-    height: 52,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
+    height: 54,
+    borderWidth: 1.5,
+    borderColor: "transparent",
+    borderRadius: radius.field,
     paddingHorizontal: spacing.md,
     fontFamily: fonts.regular,
     fontSize: 16,
     color: colors.text,
-    backgroundColor: colors.background,
+    backgroundColor: colors.surface,
   },
   inputWithToggle: {
     paddingRight: 48,
   },
   inputFocused: {
     borderColor: colors.primary,
+    backgroundColor: colors.background,
   },
   inputError: {
     borderColor: colors.error,

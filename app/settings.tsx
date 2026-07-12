@@ -31,10 +31,28 @@ import {
 } from "@/theme/colors";
 import type { ThemeColors } from "@/theme/themes";
 import { useThemedStyles } from "@/theme/useThemedStyles";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { PASSWORD_MIN_LENGTH, validateNewPassword } from "@/utils/passwordPolicy";
 import * as Application from "expo-application";
 import Constants from "expo-constants";
 import { useRouter } from "expo-router";
+import {
+  ArrowLeft,
+  Bell,
+  Bug,
+  ChevronRight,
+  FileText,
+  Heart,
+  Info,
+  Lock,
+  Mail,
+  Megaphone,
+  MessageCircle,
+  ShieldCheck,
+  UserRoundX,
+  Users,
+  UserX,
+  type LucideIcon,
+} from "lucide-react-native";
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -128,8 +146,9 @@ export default function SettingsScreen() {
       setPasswordError("All fields are required.");
       return;
     }
-    if (newPassword.length < 8) {
-      setPasswordError("New password must be at least 8 characters.");
+    const pwError = validateNewPassword(newPassword);
+    if (pwError) {
+      setPasswordError(pwError);
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -218,11 +237,7 @@ export default function SettingsScreen() {
             accessibilityRole="button"
             accessibilityLabel="Go back"
           >
-            <MaterialCommunityIcons
-              name="arrow-left"
-              size={22}
-              color={colors.textPrimary}
-            />
+            <ArrowLeft size={20} color={colors.textPrimary} strokeWidth={2.2} />
           </Pressable>
           <Text style={styles.headerTitle}>Settings</Text>
           <View style={{ width: 36 }} />
@@ -237,11 +252,7 @@ export default function SettingsScreen() {
           {/* ── Account section ── */}
           <SectionTitle text="Account" />
           <View style={styles.sectionCard}>
-            <Row
-              icon="email-outline"
-              label="Email"
-              value={user?.email ?? "—"}
-            />
+            <Row icon={Mail} label="Email" value={user?.email ?? "—"} />
             <Divider />
             {!showPasswordForm ? (
               <Pressable
@@ -250,17 +261,13 @@ export default function SettingsScreen() {
                 accessibilityRole="button"
               >
                 <View style={styles.actionIcon}>
-                  <MaterialCommunityIcons
-                    name="lock-outline"
-                    size={20}
-                    color={colors.textPrimary}
-                  />
+                  <Lock size={18} color={colors.textPrimary} strokeWidth={2} />
                 </View>
                 <Text style={styles.actionLabel}>Change password</Text>
-                <MaterialCommunityIcons
-                  name="chevron-right"
-                  size={20}
+                <ChevronRight
+                  size={18}
                   color={colors.textMuted}
+                  strokeWidth={2}
                 />
               </Pressable>
             ) : (
@@ -283,7 +290,7 @@ export default function SettingsScreen() {
                   value={newPassword}
                   onChangeText={setNewPassword}
                   style={styles.input}
-                  placeholder="At least 8 characters"
+                  placeholder={`At least ${PASSWORD_MIN_LENGTH} characters`}
                   placeholderTextColor={colors.textMuted}
                   secureTextEntry
                   autoCapitalize="none"
@@ -337,7 +344,7 @@ export default function SettingsScreen() {
                     {changingPassword ? (
                       <ActivityIndicator
                         size="small"
-                        color={colors.textInverse}
+                        color={colors.onPrimary}
                       />
                     ) : (
                       <Text style={styles.primaryBtnText}>Update password</Text>
@@ -358,7 +365,7 @@ export default function SettingsScreen() {
             ) : (
               <>
                 <ToggleRow
-                  icon="bell-outline"
+                  icon={Bell}
                   label="Enable notifications"
                   hint="Master switch for all push notifications"
                   value={prefs.notificationsEnabled}
@@ -367,7 +374,7 @@ export default function SettingsScreen() {
                 />
                 <Divider />
                 <ToggleRow
-                  icon="heart-outline"
+                  icon={Heart}
                   label="Likes"
                   hint="When someone likes your review"
                   value={prefs.notifyOnLike}
@@ -376,7 +383,7 @@ export default function SettingsScreen() {
                 />
                 <Divider />
                 <ToggleRow
-                  icon="comment-outline"
+                  icon={MessageCircle}
                   label="Comments"
                   hint="When someone comments on your review"
                   value={prefs.notifyOnComment}
@@ -385,7 +392,7 @@ export default function SettingsScreen() {
                 />
                 <Divider />
                 <ToggleRow
-                  icon="account-multiple-outline"
+                  icon={Users}
                   label="New followers"
                   hint="When someone follows you"
                   value={prefs.notifyOnFollow}
@@ -394,7 +401,7 @@ export default function SettingsScreen() {
                 />
                 <Divider />
                 <ToggleRow
-                  icon="bullhorn-outline"
+                  icon={Megaphone}
                   label="Announcements"
                   hint="New restaurants and app news"
                   value={prefs.notifyOnBroadcast}
@@ -407,7 +414,8 @@ export default function SettingsScreen() {
             )}
           </View>
 
-          {/* ── Privacy section ── */}
+          {/* ── Privacy section — who can interact with you + how your data
+               is handled, so the policy lives here rather than under About. ── */}
           <SectionTitle text="Privacy" />
           <View style={styles.sectionCard}>
             <Pressable
@@ -416,17 +424,33 @@ export default function SettingsScreen() {
               accessibilityRole="button"
             >
               <View style={styles.actionIcon}>
-                <MaterialCommunityIcons
-                  name="account-cancel-outline"
-                  size={20}
-                  color={colors.textPrimary}
-                />
+                <UserX size={18} color={colors.textPrimary} strokeWidth={2} />
               </View>
               <Text style={styles.actionLabel}>Blocked users</Text>
-              <MaterialCommunityIcons
-                name="chevron-right"
-                size={20}
+              <ChevronRight
+                size={18}
                 color={colors.textMuted}
+                strokeWidth={2}
+              />
+            </Pressable>
+            <Divider />
+            <Pressable
+              style={styles.actionRow}
+              onPress={() => router.push("/privacy")}
+              accessibilityRole="button"
+            >
+              <View style={styles.actionIcon}>
+                <ShieldCheck
+                  size={18}
+                  color={colors.textPrimary}
+                  strokeWidth={2}
+                />
+              </View>
+              <Text style={styles.actionLabel}>Privacy Policy</Text>
+              <ChevronRight
+                size={18}
+                color={colors.textMuted}
+                strokeWidth={2}
               />
             </Pressable>
           </View>
@@ -442,73 +466,51 @@ export default function SettingsScreen() {
                   accessibilityRole="button"
                 >
                   <View style={styles.actionIcon}>
-                    <MaterialCommunityIcons
-                      name="bug-outline"
-                      size={20}
-                      color={colors.textPrimary}
-                    />
+                    <Bug size={18} color={colors.textPrimary} strokeWidth={2} />
                   </View>
                   <Text style={styles.actionLabel}>Report a bug</Text>
-                  <MaterialCommunityIcons
-                    name="chevron-right"
-                    size={20}
+                  <ChevronRight
+                    size={18}
                     color={colors.textMuted}
+                    strokeWidth={2}
                   />
                 </Pressable>
               </View>
             </>
           ) : null}
 
-          {/* ── About section ── */}
+          {/* ── About section — legal terms + version info. ── */}
           <SectionTitle text="About" />
           <View style={styles.sectionCard}>
             <Pressable
               style={styles.actionRow}
-              onPress={() => router.push("/privacy")}
-            >
-              <View style={styles.actionIcon}>
-                <MaterialCommunityIcons
-                  name="shield-check-outline"
-                  size={20}
-                  color={colors.textPrimary}
-                />
-              </View>
-              <Text style={styles.actionLabel}>Privacy Policy</Text>
-              <MaterialCommunityIcons
-                name="chevron-right"
-                size={20}
-                color={colors.textMuted}
-              />
-            </Pressable>
-            <Divider />
-            <Pressable
-              style={styles.actionRow}
               onPress={() => router.push("/terms")}
+              accessibilityRole="button"
             >
               <View style={styles.actionIcon}>
-                <MaterialCommunityIcons
-                  name="file-document-outline"
-                  size={20}
+                <FileText
+                  size={18}
                   color={colors.textPrimary}
+                  strokeWidth={2}
                 />
               </View>
               <Text style={styles.actionLabel}>Terms of Service</Text>
-              <MaterialCommunityIcons
-                name="chevron-right"
-                size={20}
+              <ChevronRight
+                size={18}
                 color={colors.textMuted}
+                strokeWidth={2}
               />
             </Pressable>
             <Divider />
             <Row
-              icon="information-outline"
+              icon={Info}
               label="App version"
               value={`${appVersion} (${buildVersion})`}
             />
           </View>
 
           {/* ── Danger zone ── */}
-          <SectionTitle text="Account management" />
+          <SectionTitle text="Danger zone" />
           <View style={styles.sectionCard}>
             {!showDeleteForm ? (
               <Pressable
@@ -516,20 +518,12 @@ export default function SettingsScreen() {
                 onPress={() => setShowDeleteForm(true)}
               >
                 <View style={[styles.actionIcon, styles.actionIconDanger]}>
-                  <MaterialCommunityIcons
-                    name="account-remove-outline"
-                    size={20}
-                    color={colors.error}
-                  />
+                  <UserRoundX size={18} color={colors.error} strokeWidth={2} />
                 </View>
                 <Text style={[styles.actionLabel, styles.actionLabelDanger]}>
                   Delete account
                 </Text>
-                <MaterialCommunityIcons
-                  name="chevron-right"
-                  size={20}
-                  color={colors.error}
-                />
+                <ChevronRight size={18} color={colors.error} strokeWidth={2} />
               </Pressable>
             ) : (
               <View style={styles.passwordForm}>
@@ -625,11 +619,11 @@ function SectionTitle({ text }: { text: string }) {
 }
 
 function Row({
-  icon,
+  icon: Icon,
   label,
   value,
 }: {
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: LucideIcon;
   label: string;
   value: string;
 }) {
@@ -637,11 +631,7 @@ function Row({
   return (
     <View style={styles.row}>
       <View style={styles.actionIcon}>
-        <MaterialCommunityIcons
-          name={icon}
-          size={20}
-          color={colors.textPrimary}
-        />
+        <Icon size={18} color={colors.textPrimary} strokeWidth={2} />
       </View>
       <Text style={styles.rowLabel}>{label}</Text>
       <Text style={styles.rowValue} numberOfLines={1}>
@@ -652,14 +642,14 @@ function Row({
 }
 
 function ToggleRow({
-  icon,
+  icon: Icon,
   label,
   hint,
   value,
   onChange,
   disabled,
 }: {
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: LucideIcon;
   label: string;
   hint?: string;
   value: boolean;
@@ -670,11 +660,7 @@ function ToggleRow({
   return (
     <View style={[styles.toggleRow, disabled && styles.toggleRowDisabled]}>
       <View style={styles.actionIcon}>
-        <MaterialCommunityIcons
-          name={icon}
-          size={20}
-          color={colors.textPrimary}
-        />
+        <Icon size={18} color={colors.textPrimary} strokeWidth={2} />
       </View>
       <View style={styles.toggleText}>
         <Text style={styles.rowLabel}>{label}</Text>
@@ -684,8 +670,8 @@ function ToggleRow({
         value={value}
         onValueChange={onChange}
         disabled={disabled}
-        trackColor={{ false: colors.divider, true: colors.primary }}
-        thumbColor={colors.cardBackground}
+        trackColor={{ false: colors.divider, true: colors.switchTrack }}
+        thumbColor={colors.white}
         ios_backgroundColor={colors.divider}
       />
     </View>
@@ -717,6 +703,8 @@ function makeStyles(c: ThemeColors) {
   backBtn: {
     width: 36,
     height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.surface,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -865,7 +853,7 @@ function makeStyles(c: ThemeColors) {
   primaryBtnText: {
     fontFamily: fonts.bold,
     fontSize: T.size.base,
-    color: colors.textInverse,
+    color: colors.onPrimary,
   },
   secondaryBtn: {
     flex: 1,
@@ -932,7 +920,7 @@ function makeStyles(c: ThemeColors) {
   testBtnText: {
     fontFamily: fonts.bold,
     fontSize: T.size.base,
-    color: colors.textInverse,
+    color: colors.onPrimary,
   },
 
   pressed: { opacity: 0.7 },

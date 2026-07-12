@@ -2,15 +2,19 @@
 // Full paginated reviews list for a restaurant.
 // Reached by tapping "See all" on the detail screen.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import {
+  ArrowLeft,
+  EllipsisVertical,
+  Flag,
+  Star,
+  UserX,
+} from "lucide-react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
     FlatList,
-    Modal,
-    Platform,
     Pressable,
     StyleSheet,
     Text,
@@ -18,6 +22,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { DraggableSheet } from "@/components/DraggableSheet";
 import { ReviewItem } from "@/components/ReviewItem";
 import { StarRating } from "@/components/StarRating";
 import { useAuth } from "@/hooks/useAuth";
@@ -340,11 +345,7 @@ export default function AllReviewsScreen() {
           style={styles.backBtn}
           hitSlop={10}
         >
-          <MaterialCommunityIcons
-            name="arrow-left"
-            size={22}
-            color={colors.textPrimary}
-          />
+          <ArrowLeft size={20} color={colors.textPrimary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.headerTitle}>Reviews</Text>
         <View style={{ width: 36 }} />
@@ -423,11 +424,7 @@ export default function AllReviewsScreen() {
                     onPress={() => setReviewToManage(item)}
                     hitSlop={8}
                   >
-                    <MaterialCommunityIcons
-                      name="dots-vertical"
-                      size={20}
-                      color={colors.textMuted}
-                    />
+                    <EllipsisVertical size={19} color={colors.textMuted} strokeWidth={2} />
                   </Pressable>
                 ) : null}
               </View>
@@ -452,90 +449,72 @@ export default function AllReviewsScreen() {
       )}
 
       {/* Review options bottom sheet */}
-      <Modal
+      <DraggableSheet
         visible={!!reviewToManage}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setReviewToManage(null)}
+        onClose={() => setReviewToManage(null)}
       >
+        <Text style={sheetStyles.title}>Manage Review</Text>
+
+        {/* Only reachable for other people's reviews — own reviews are
+            edited/deleted via the inline buttons in the row, never here. */}
         <Pressable
-          style={sheetStyles.overlay}
+          style={sheetStyles.item}
+          onPress={() => {
+            const r = reviewToManage;
+            setReviewToManage(null);
+            Alert.alert("Report Review", "Report this as inappropriate?", [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: "Report",
+                style: "destructive",
+                onPress: () => r && handleReportReview(r),
+              },
+            ]);
+          }}
+        >
+          <Flag size={20} color={colors.error} strokeWidth={2} />
+          <Text style={[sheetStyles.itemText, { color: colors.error }]}>
+            Report as Inappropriate
+          </Text>
+        </Pressable>
+
+        <Pressable
+          style={sheetStyles.item}
+          onPress={() => {
+            const r = reviewToManage;
+            const uname = manageAuthor?.username;
+            setReviewToManage(null);
+            Alert.alert(
+              "Block user",
+              uname
+                ? `Block @${uname}? You won't see each other's reviews or comments.`
+                : "Block this user? You won't see each other's reviews or comments.",
+              [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Block",
+                  style: "destructive",
+                  onPress: () => r && handleBlockUser(r),
+                },
+              ],
+            );
+          }}
+        >
+          <UserX size={20} color={colors.textPrimary} strokeWidth={2} />
+          <Text style={sheetStyles.itemText}>
+            {manageAuthor?.username
+              ? `Block @${manageAuthor.username}`
+              : "Block user"}
+          </Text>
+        </Pressable>
+
+        <Pressable
+          style={sheetStyles.cancelBtn}
           onPress={() => setReviewToManage(null)}
         >
-          <View style={sheetStyles.sheet}>
-            <View style={sheetStyles.handle} />
-            <Text style={sheetStyles.title}>Manage Review</Text>
-
-            {/* Only reachable for other people's reviews — own reviews are
-                edited/deleted via the inline buttons in the row, never here. */}
-            <Pressable
-              style={sheetStyles.item}
-              onPress={() => {
-                const r = reviewToManage;
-                setReviewToManage(null);
-                Alert.alert("Report Review", "Report this as inappropriate?", [
-                  { text: "Cancel", style: "cancel" },
-                  {
-                    text: "Report",
-                    style: "destructive",
-                    onPress: () => r && handleReportReview(r),
-                  },
-                ]);
-              }}
-            >
-              <MaterialCommunityIcons
-                name="flag-outline"
-                size={22}
-                color={colors.error}
-              />
-              <Text style={[sheetStyles.itemText, { color: colors.error }]}>
-                Report as Inappropriate
-              </Text>
-            </Pressable>
-
-            <Pressable
-              style={sheetStyles.item}
-              onPress={() => {
-                const r = reviewToManage;
-                const uname = manageAuthor?.username;
-                setReviewToManage(null);
-                Alert.alert(
-                  "Block user",
-                  uname
-                    ? `Block @${uname}? You won't see each other's reviews or comments.`
-                    : "Block this user? You won't see each other's reviews or comments.",
-                  [
-                    { text: "Cancel", style: "cancel" },
-                    {
-                      text: "Block",
-                      style: "destructive",
-                      onPress: () => r && handleBlockUser(r),
-                    },
-                  ],
-                );
-              }}
-            >
-              <MaterialCommunityIcons
-                name="account-cancel-outline"
-                size={22}
-                color={colors.textPrimary}
-              />
-              <Text style={sheetStyles.itemText}>
-                {manageAuthor?.username
-                  ? `Block @${manageAuthor.username}`
-                  : "Block user"}
-              </Text>
-            </Pressable>
-
-            <Pressable
-              style={sheetStyles.cancelBtn}
-              onPress={() => setReviewToManage(null)}
-            >
-              <Text style={sheetStyles.cancelText}>Cancel</Text>
-            </Pressable>
-          </View>
+          <Text style={sheetStyles.cancelText}>Cancel</Text>
         </Pressable>
-      </Modal>
+      </DraggableSheet>
     </SafeAreaView>
   );
 }
@@ -564,11 +543,7 @@ function RatingSummary({ dist }: { dist: RatingDistribution }) {
           return (
             <View key={star} style={styles.barRow}>
               <Text style={styles.barStar}>{star}</Text>
-              <MaterialCommunityIcons
-                name="star"
-                size={11}
-                color={colors.star}
-              />
+              <Star size={11} color={colors.star} fill={colors.star} />
               <View style={styles.barTrack}>
                 <View
                   style={[styles.barFill, { width: `${Math.round(pct * 100)}%` }]}
@@ -702,7 +677,7 @@ function makeStyles(c: ThemeColors) {
     color: colors.textMuted,
   },
   sortTextActive: {
-    color: colors.textInverse,
+    color: colors.onPrimary,
     fontFamily: fonts.bold,
   },
   center: {
@@ -731,26 +706,8 @@ function makeStyles(c: ThemeColors) {
 function makeSheetStyles(c: ThemeColors) {
   const colors = c;
   return StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
-    justifyContent: "flex-end",
-  },
-  sheet: {
-    backgroundColor: colors.cardBackground,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    padding: spacing.xxl,
-    paddingBottom: Platform.OS === "ios" ? 40 : spacing.xxl,
-  },
-  handle: {
-    width: 40,
-    height: 4,
-    backgroundColor: colors.divider,
-    borderRadius: 2,
-    alignSelf: "center",
-    marginBottom: spacing.lg,
-  },
+  // Sheet chrome (backdrop, rounded sheet, drag handle) now lives in
+  // DraggableSheet; only the inner content styles remain here.
   title: {
     fontFamily: fonts.bold,
     fontSize: T.size.xl,

@@ -14,8 +14,8 @@
 // skeleton block, since the real card's info is overlaid on the image
 // (no separate info section to mimic).
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
+import { Star } from "lucide-react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { memo, useCallback } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -116,7 +116,7 @@ export const RestaurantImageCard = memo(function RestaurantImageCard({
 
         {hasReviews ? (
           <View style={styles.ratingRow}>
-            <MaterialCommunityIcons name="star" size={14} color={STAR_COLOR} />
+            <Star size={13} color={STAR_COLOR} fill={STAR_COLOR} />
             <Text style={styles.ratingValue}>
               {restaurant.averageRating.toFixed(1)}{" "}
               <Text style={styles.ratingCount}>({restaurant.reviewCount})</Text>

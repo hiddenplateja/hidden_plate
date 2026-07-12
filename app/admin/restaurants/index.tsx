@@ -2,7 +2,13 @@
 // Admin: browse/search ALL restaurants (active + pending), filter by status,
 // tap to edit, or add a new one.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import {
+  ChevronRight,
+  CircleX,
+  Plus,
+  Search,
+  UtensilsCrossed,
+} from "lucide-react-native";
 import { Image } from "expo-image";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
@@ -112,11 +118,7 @@ export default function AdminRestaurantsList() {
             accessibilityRole="button"
             accessibilityLabel="Add restaurant"
           >
-            <MaterialCommunityIcons
-              name="plus"
-              size={24}
-              color={colors.primary}
-            />
+            <Plus size={22} color={colors.primary} strokeWidth={2.2} />
           </Pressable>
         }
       />
@@ -124,11 +126,7 @@ export default function AdminRestaurantsList() {
       {/* Search + status filter */}
       <View style={styles.filters}>
         <View style={styles.searchBar}>
-          <MaterialCommunityIcons
-            name="magnify"
-            size={18}
-            color={colors.textSecondary}
-          />
+          <Search size={17} color={colors.textSecondary} strokeWidth={2.2} />
           <TextInput
             style={styles.searchInput}
             value={query}
@@ -140,11 +138,7 @@ export default function AdminRestaurantsList() {
           />
           {query.length > 0 ? (
             <Pressable onPress={() => setQuery("")} hitSlop={8}>
-              <MaterialCommunityIcons
-                name="close-circle"
-                size={16}
-                color={colors.textMuted}
-              />
+              <CircleX size={16} color={colors.textMuted} strokeWidth={2} />
             </Pressable>
           ) : null}
         </View>
@@ -230,10 +224,10 @@ function RestaurantRow({
         <Image source={{ uri: thumb }} style={styles.thumb} contentFit="cover" />
       ) : (
         <View style={[styles.thumb, styles.thumbPlaceholder]}>
-          <MaterialCommunityIcons
-            name="silverware-fork-knife"
-            size={18}
+          <UtensilsCrossed
+            size={17}
             color={colors.textMuted}
+            strokeWidth={1.8}
           />
         </View>
       )}
@@ -258,11 +252,7 @@ function RestaurantRow({
           ) : null}
         </View>
       </View>
-      <MaterialCommunityIcons
-        name="chevron-right"
-        size={20}
-        color={colors.textMuted}
-      />
+      <ChevronRight size={18} color={colors.textMuted} strokeWidth={2} />
     </Pressable>
   );
 }
@@ -325,7 +315,7 @@ function makeStyles(c: ThemeColors) {
     fontSize: T.size.sm,
     color: colors.textSecondary,
   },
-  tabLabelActive: { color: colors.textInverse, fontFamily: fonts.bold },
+  tabLabelActive: { color: colors.onPrimary, fontFamily: fonts.bold },
 
   listContent: { paddingVertical: spacing.sm, paddingBottom: 100 },
   row: {

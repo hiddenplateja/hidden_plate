@@ -5,7 +5,7 @@
 // matching the search icon's appearance. Badge appears in the top-right
 // when unreadCount > 0.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Bell } from "lucide-react-native";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { useNotifications } from "@/hooks/useNotifications";
@@ -33,11 +33,7 @@ export function NotificationBell({ onPress }: NotificationBellProps) {
           : "Notifications"
       }
     >
-      <MaterialCommunityIcons
-        name="bell-outline"
-        size={22}
-        color={colors.textPrimary}
-      />
+      <Bell size={20} color={colors.textPrimary} strokeWidth={2} />
       {unreadCount > 0 ? (
         <View style={styles.badge}>
           <Text style={styles.badgeText} numberOfLines={1}>
@@ -82,7 +78,7 @@ function makeStyles(c: ThemeColors) {
   badgeText: {
     fontFamily: fonts.bold,
     fontSize: 10,
-    color: colors.textInverse,
+    color: colors.onPrimary,
     lineHeight: 12,
   },
   });

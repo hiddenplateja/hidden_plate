@@ -3,8 +3,16 @@
 // active listing window to stay visible in discovery; this is where the owner
 // buys/renews it (a one-time period via RevenueCat). Mirrors the Promote screen.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import {
+  ArrowLeft,
+  CircleCheck,
+  ClockAlert,
+  EyeOff,
+  Info,
+  Lock,
+  type LucideIcon,
+} from "lucide-react-native";
+import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -18,6 +26,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Button } from "@/components/ui/Button";
+import { PAID_FEATURES_ENABLED } from "@/constants/features";
 import { useAuth } from "@/hooks/useAuth";
 import { formatPrice } from "@/services/featuring";
 import {
@@ -54,7 +63,15 @@ function fmtDate(d: Date): string {
   });
 }
 
+// Paid listing renewal is gated off for the free launch. No UI links here, but
+// a deep link could still land on the route — bounce back to the restaurant.
 export default function ListingScreen() {
+  const { id } = useLocalSearchParams<{ id: string }>();
+  if (!PAID_FEATURES_ENABLED) return <Redirect href={`/restaurant/${id}`} />;
+  return <ListingScreenInner />;
+}
+
+function ListingScreenInner() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { user } = useAuth();
@@ -147,11 +164,7 @@ export default function ListingScreen() {
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >
-          <MaterialCommunityIcons
-            name="arrow-left"
-            size={22}
-            color={colors.textPrimary}
-          />
+          <ArrowLeft size={20} color={colors.textPrimary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.headerTitle}>Your listing</Text>
         <View style={{ width: 36 }} />
@@ -171,11 +184,7 @@ export default function ListingScreen() {
       ) : load.restaurant.ownerId !== user?.id ? (
         <View style={styles.center}>
           <View style={styles.noticeIcon}>
-            <MaterialCommunityIcons
-              name="account-lock-outline"
-              size={32}
-              color={colors.primary}
-            />
+            <Lock size={30} color={colors.textPrimary} strokeWidth={1.8} />
           </View>
           <Text style={styles.stateTitle}>Owners only</Text>
           <Text style={styles.stateBody}>
@@ -206,22 +215,22 @@ interface BodyProps {
 }
 
 function statusCopy(s: ListingStatus): {
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: LucideIcon;
   text: string;
   tone: "ok" | "warn" | "bad";
 } {
   switch (s.state) {
     case "active":
       return {
-        icon: "check-circle",
+        icon: CircleCheck,
         text: s.until ? `Listed until ${fmtDate(s.until)}` : "Your listing is active",
         tone: "ok",
       };
     case "grandfathered":
-      return { icon: "check-circle", text: "Your listing is active", tone: "ok" };
+      return { icon: CircleCheck, text: "Your listing is active", tone: "ok" };
     case "expiring":
       return {
-        icon: "clock-alert-outline",
+        icon: ClockAlert,
         text: s.until
           ? `Expires ${fmtDate(s.until)} — renew to stay listed`
           : "Expiring soon — renew to stay listed",
@@ -229,13 +238,13 @@ function statusCopy(s: ListingStatus): {
       };
     case "lapsed":
       return {
-        icon: "eye-off-outline",
+        icon: EyeOff,
         text: "Your listing is hidden — renew to restore it",
         tone: "bad",
       };
     default:
       return {
-        icon: "information-outline",
+        icon: Info,
         text: "Activate your listing to stay visible",
         tone: "warn",
       };
@@ -262,7 +271,7 @@ function ListingBody({ styles, colors, restaurant, plan, paying, onPay }: BodyPr
       <Text style={styles.restaurantName}>{restaurant.name}</Text>
 
       <View style={[styles.statusBanner, { borderColor: tint }]}>
-        <MaterialCommunityIcons name={sc.icon} size={18} color={tint} />
+        <sc.icon size={17} color={tint} strokeWidth={2} />
         <Text style={styles.statusText}>{sc.text}</Text>
       </View>
 
@@ -275,11 +284,7 @@ function ListingBody({ styles, colors, restaurant, plan, paying, onPay }: BodyPr
       <View style={styles.perks}>
         {PERKS.map((perk) => (
           <View key={perk} style={styles.perkRow}>
-            <MaterialCommunityIcons
-              name="check-circle"
-              size={16}
-              color={colors.primary}
-            />
+            <CircleCheck size={16} color={colors.success} strokeWidth={2.2} />
             <Text style={styles.perkText}>{perk}</Text>
           </View>
         ))}
@@ -337,6 +342,8 @@ function makeStyles(c: ThemeColors) {
     backBtn: {
       width: 36,
       height: 36,
+      borderRadius: 18,
+      backgroundColor: colors.surface,
       alignItems: "center",
       justifyContent: "center",
     },
@@ -356,7 +363,7 @@ function makeStyles(c: ThemeColors) {
       width: 72,
       height: 72,
       borderRadius: radius.full,
-      backgroundColor: colors.primaryLight,
+      backgroundColor: colors.surface,
       alignItems: "center",
       justifyContent: "center",
       marginBottom: spacing.sm,
@@ -419,9 +426,9 @@ function makeStyles(c: ThemeColors) {
       gap: spacing.md,
       padding: spacing.md,
       borderRadius: radius.lg,
-      backgroundColor: colors.primaryLight,
-      borderWidth: 1.5,
-      borderColor: colors.primary,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
     },
     planText: { flex: 1, gap: 2 },
     planLabel: {

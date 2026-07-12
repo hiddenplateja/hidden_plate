@@ -11,8 +11,8 @@
 // card layout: thumbnail + name/parish row, then meta row, then 3 comment
 // lines. No footer skeleton — keeps the placeholder light.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
+import { ChevronRight, Heart, UtensilsCrossed } from "lucide-react-native";
 import { memo } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
@@ -110,11 +110,7 @@ function UserReviewItemImpl({
           />
         ) : (
           <View style={[styles.restaurantThumb, styles.thumbPlaceholder]}>
-            <MaterialCommunityIcons
-              name="silverware-fork-knife"
-              size={20}
-              color={colors.border}
-            />
+            <UtensilsCrossed size={19} color={colors.border} strokeWidth={1.8} />
           </View>
         )}
         <View style={styles.restaurantInfo}>
@@ -123,11 +119,7 @@ function UserReviewItemImpl({
           </Text>
           <Text style={styles.restaurantParish}>{parishText}</Text>
         </View>
-        <MaterialCommunityIcons
-          name="chevron-right"
-          size={18}
-          color={colors.textMuted}
-        />
+        <ChevronRight size={17} color={colors.textMuted} strokeWidth={2} />
       </View>
 
       {/* Review meta */}
@@ -180,11 +172,7 @@ function UserReviewItemImpl({
       {/* Footer */}
       <View style={styles.footer}>
         <View style={styles.likes}>
-          <MaterialCommunityIcons
-            name="heart-outline"
-            size={14}
-            color={colors.textMuted}
-          />
+          <Heart size={13} color={colors.textMuted} strokeWidth={2} />
           <Text style={styles.likeCount}>
             {review.likeCount} {review.likeCount === 1 ? "like" : "likes"}
           </Text>

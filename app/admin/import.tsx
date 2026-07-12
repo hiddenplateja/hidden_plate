@@ -3,7 +3,7 @@
 // published + verified immediately (curated content). Rows without lat/lng are
 // geocoded from the address. Built for cold-start seeding of empty parishes.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { CircleAlert, CircleCheck } from "lucide-react-native";
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
@@ -157,22 +157,14 @@ export default function AdminImport() {
         {result ? (
           <View style={styles.resultCard}>
             <View style={styles.resultRow}>
-              <MaterialCommunityIcons
-                name="check-circle"
-                size={18}
-                color={colors.primary}
-              />
+              <CircleCheck size={17} color={colors.success} strokeWidth={2} />
               <Text style={styles.resultText}>
                 {result.created} created
               </Text>
               {result.failed > 0 ? (
                 <>
                   <Text style={styles.resultDot}>·</Text>
-                  <MaterialCommunityIcons
-                    name="alert-circle-outline"
-                    size={18}
-                    color={colors.error}
-                  />
+                  <CircleAlert size={17} color={colors.error} strokeWidth={2} />
                   <Text style={[styles.resultText, { color: colors.error }]}>
                     {result.failed} failed
                   </Text>

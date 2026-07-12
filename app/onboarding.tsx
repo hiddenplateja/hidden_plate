@@ -7,8 +7,14 @@
 // Finishing/skipping saves favorites + clears the pending flag, then refresh()
 // lets the gate fall through into the app.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Location from "expo-location";
+import {
+  ArrowLeft,
+  Bell,
+  CircleCheck,
+  MapPin,
+  type LucideIcon,
+} from "lucide-react-native";
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -193,15 +199,11 @@ export default function OnboardingScreen() {
           <Pressable
             onPress={() => setStep((s) => s - 1)}
             hitSlop={10}
-            style={styles.iconBtn}
+            style={styles.backBtn}
             accessibilityRole="button"
             accessibilityLabel="Back"
           >
-            <MaterialCommunityIcons
-              name="arrow-left"
-              size={24}
-              color={colors.textPrimary}
-            />
+            <ArrowLeft size={21} color={colors.textPrimary} strokeWidth={2.2} />
           </Pressable>
         ) : (
           <View style={styles.iconBtn} />
@@ -315,7 +317,7 @@ export default function OnboardingScreen() {
                       {followBusy === u.id ? (
                         <ActivityIndicator
                           size="small"
-                          color={isFollowing ? colors.primary : colors.textInverse}
+                          color={isFollowing ? colors.primary : colors.onPrimary}
                         />
                       ) : (
                         <Text
@@ -341,7 +343,7 @@ export default function OnboardingScreen() {
             </Text>
 
             <PermissionRow
-              icon="map-marker-outline"
+              icon={MapPin}
               title="Use my location"
               body="See what's near you and open now."
               enabled={locationOn}
@@ -351,7 +353,7 @@ export default function OnboardingScreen() {
               colors={colors}
             />
             <PermissionRow
-              icon="bell-outline"
+              icon={Bell}
               title="Turn on notifications"
               body="Likes, comments, follows, and new spots."
               enabled={pushOn}
@@ -376,7 +378,7 @@ export default function OnboardingScreen() {
 }
 
 function PermissionRow({
-  icon,
+  icon: Icon,
   title,
   body,
   enabled,
@@ -385,7 +387,7 @@ function PermissionRow({
   styles,
   colors,
 }: {
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: LucideIcon;
   title: string;
   body: string;
   enabled: boolean;
@@ -402,7 +404,7 @@ function PermissionRow({
       accessibilityRole="button"
     >
       <View style={styles.permIcon}>
-        <MaterialCommunityIcons name={icon} size={22} color={colors.primary} />
+        <Icon size={21} color={colors.textPrimary} strokeWidth={2} />
       </View>
       <View style={styles.permText}>
         <Text style={styles.permTitle}>{title}</Text>
@@ -411,11 +413,7 @@ function PermissionRow({
       {busy ? (
         <ActivityIndicator size="small" color={colors.primary} />
       ) : enabled ? (
-        <MaterialCommunityIcons
-          name="check-circle"
-          size={24}
-          color={colors.success}
-        />
+        <CircleCheck size={22} color={colors.success} strokeWidth={2.2} />
       ) : (
         <Text style={styles.permEnable}>Enable</Text>
       )}
@@ -440,6 +438,15 @@ function makeStyles(c: ThemeColors) {
       alignItems: "flex-start",
       justifyContent: "center",
     },
+    backBtn: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: colors.surface,
+      alignItems: "center",
+      justifyContent: "center",
+      marginRight: 12, // keeps StepDots centered against the 52pt skip button
+    },
     skipBtn: {
       width: 52,
       height: 40,
@@ -452,15 +459,16 @@ function makeStyles(c: ThemeColors) {
       color: colors.textMuted,
     },
     scroll: {
-      paddingHorizontal: spacing.xl,
+      paddingHorizontal: spacing.lg,
       paddingTop: spacing.lg,
       paddingBottom: spacing.xl,
     },
     title: {
       fontFamily: fonts.black,
-      fontSize: T.size.xxl,
+      fontSize: T.size.title,
       color: colors.textPrimary,
       letterSpacing: T.tracking.tight,
+      lineHeight: 34,
     },
     subtitle: {
       fontFamily: fonts.regular,
@@ -489,7 +497,7 @@ function makeStyles(c: ThemeColors) {
       borderColor: colors.divider,
     },
     chipActive: {
-      backgroundColor: colors.primaryLight,
+      backgroundColor: colors.primary,
       borderColor: colors.primary,
     },
     chipText: {
@@ -497,7 +505,7 @@ function makeStyles(c: ThemeColors) {
       fontSize: T.size.sm,
       color: colors.textSecondary,
     },
-    chipTextActive: { fontFamily: fonts.bold, color: colors.primary },
+    chipTextActive: { fontFamily: fonts.bold, color: colors.onPrimary },
     loader: { paddingVertical: spacing.xxl, alignItems: "center" },
     emptyText: {
       fontFamily: fonts.regular,
@@ -540,7 +548,7 @@ function makeStyles(c: ThemeColors) {
     followText: {
       fontFamily: fonts.bold,
       fontSize: T.size.sm,
-      color: colors.textInverse,
+      color: colors.onPrimary,
     },
     followingText: { color: colors.primary },
     permRow: {
@@ -558,7 +566,7 @@ function makeStyles(c: ThemeColors) {
       width: 44,
       height: 44,
       borderRadius: radius.full,
-      backgroundColor: colors.primaryLight,
+      backgroundColor: colors.surface,
       alignItems: "center",
       justifyContent: "center",
     },
@@ -580,7 +588,7 @@ function makeStyles(c: ThemeColors) {
       color: colors.primary,
     },
     footer: {
-      paddingHorizontal: spacing.xl,
+      paddingHorizontal: spacing.lg,
       paddingTop: spacing.sm,
       paddingBottom: spacing.sm,
     },

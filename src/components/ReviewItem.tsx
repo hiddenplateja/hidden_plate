@@ -8,8 +8,8 @@
 // Author info is passed in via the `author` prop — the parent screen is
 // responsible for batch-loading users for visible reviews (avoids N+1).
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
+import { Heart, MessageCircle, Store } from "lucide-react-native";
 import { memo } from "react";
 import {
   Alert,
@@ -207,11 +207,7 @@ function ReviewItemImpl({
       {ownerReply ? (
         <View style={styles.ownerReply}>
           <View style={styles.ownerReplyHead}>
-            <MaterialCommunityIcons
-              name="storefront"
-              size={13}
-              color={colors.primary}
-            />
+            <Store size={13} color={colors.primary} strokeWidth={2} />
             <Text style={styles.ownerReplyLabel}>Owner reply</Text>
           </View>
           <Text style={styles.ownerReplyText} numberOfLines={4}>
@@ -234,10 +230,11 @@ function ReviewItemImpl({
           ]}
           hitSlop={6}
         >
-          <MaterialCommunityIcons
-            name={isLiked ? "heart" : "heart-outline"}
-            size={18}
+          <Heart
+            size={17}
             color={isLiked ? colors.primary : colors.textSecondary}
+            fill={isLiked ? colors.primary : "transparent"}
+            strokeWidth={2}
           />
           <Text style={[styles.likeCount, isLiked && styles.likeCountActive]}>
             {review.likeCount}
@@ -259,10 +256,10 @@ function ReviewItemImpl({
               pressed && styles.pressed,
             ]}
           >
-            <MaterialCommunityIcons
-              name="comment-outline"
-              size={17}
+            <MessageCircle
+              size={16}
               color={colors.textSecondary}
+              strokeWidth={2}
             />
             <Text style={styles.repliesText}>
               {replyCount > 0

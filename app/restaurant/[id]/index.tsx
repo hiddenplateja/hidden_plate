@@ -28,7 +28,30 @@
 //     shouldn't black-hole the restaurant page.
 //   - All failures report to Sentry regardless.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import {
+  ArrowLeft,
+  Bookmark,
+  ChevronRight,
+  CircleCheck,
+  Clock,
+  EllipsisVertical,
+  Flag,
+  Globe,
+  Heart,
+  Info,
+  ListPlus,
+  MapPin,
+  MessageSquareText,
+  Navigation,
+  Pencil,
+  Phone,
+  Share2,
+  SquarePen,
+  Star,
+  UserX,
+  UtensilsCrossed,
+  type LucideIcon,
+} from "lucide-react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import * as ExpoLinking from "expo-linking";
@@ -40,7 +63,6 @@ import {
   Dimensions,
   FlatList,
   Linking,
-  Modal,
   Platform,
   Pressable,
   Share,
@@ -51,11 +73,14 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AddToListSheet } from "@/components/AddToListSheet";
+import { DraggableSheet } from "@/components/DraggableSheet";
 import { ErrorState } from "@/components/ErrorState";
 import { MenuSheet } from "@/components/MenuSheet";
+import { PhotoViewer } from "@/components/PhotoViewer";
 import { RestaurantOwnerCallout } from "@/components/RestaurantOwnerCallout";
 import { ReviewItem } from "@/components/ReviewItem";
 import { Button } from "@/components/ui/Button";
+import { PAID_FEATURES_ENABLED } from "@/constants/features";
 import { useAuth } from "@/hooks/useAuth";
 import {
   useRestaurantDetail,
@@ -148,7 +173,7 @@ const LIST_TYPE_CONFIG: Record<
   ListType,
   {
     label: string;
-    icon: keyof typeof MaterialCommunityIcons.glyphMap;
+    icon: LucideIcon;
     addTitle: string;
     addBody: string;
     confirmLabel: string;
@@ -156,21 +181,21 @@ const LIST_TYPE_CONFIG: Record<
 > = {
   favorite: {
     label: "Favorites",
-    icon: "heart",
+    icon: Heart,
     addTitle: "Add to Favorites?",
     addBody: "Save this spot to your favorites for quick access.",
     confirmLabel: "Add to Favorites",
   },
   want_to_go: {
     label: "Want to Go",
-    icon: "bookmark",
+    icon: Bookmark,
     addTitle: "Add to Want to Go?",
     addBody: "Save this spot to try later.",
     confirmLabel: "Add to Want to Go",
   },
   visited: {
     label: "Visited",
-    icon: "check-circle",
+    icon: CircleCheck,
     addTitle: "Mark as Visited?",
     addBody: "Keep track of where you've eaten.",
     confirmLabel: "Mark as Visited",
@@ -210,7 +235,12 @@ export default function RestaurantDetailScreen() {
   // Mutual block set (people I blocked + people who blocked me). Their
   // reviews/photos are filtered out below. Tolerant — empty on failure.
   const [blockedUserIds, setBlockedUserIds] = useState<Set<string>>(new Set());
-  const [activePhotoIndex, setActivePhotoIndex] = useState<number | null>(null);
+  // Fullscreen photo viewer — holds its own photo set (URIs) so the same
+  // viewer serves both the review-photo grid and the hero gallery.
+  const [viewer, setViewer] = useState<{
+    photos: string[];
+    index: number;
+  } | null>(null);
   const [reviewToManage, setReviewToManage] = useState<Review | null>(null);
   // Pending save action awaiting confirmation. null = sheet closed.
   const [pendingSave, setPendingSave] = useState<ListType | null>(null);
@@ -520,16 +550,16 @@ export default function RestaurantDetailScreen() {
               accessibilityRole="button"
               accessibilityLabel="Go back"
             >
-              <MaterialCommunityIcons
-                name="arrow-left"
-                size={22}
+              <ArrowLeft
+                size={21}
                 color={colors.textPrimary}
+                strokeWidth={2.2}
               />
             </Pressable>
           </View>
           <ErrorState
             variant="screen"
-            icon="silverware-fork-knife"
+            icon={UtensilsCrossed}
             title="Couldn't load this restaurant"
             body="Check your connection and try again."
             onRetry={refetchDetail}
@@ -580,6 +610,14 @@ export default function RestaurantDetailScreen() {
   // Aggregate review photos for the "Food Photos" section — from visible
   // reviews only, so a blocked user's photos don't leak into the grid.
   const allPhotoFileIds = visibleReviews.flatMap((r) => r.imageIds);
+  const reviewPhotoUris = allPhotoFileIds.map(getImageViewUrl);
+
+  // The restaurant's own gallery for the hero viewer — cover first, then the
+  // rest of its images (deduped).
+  const heroFileIds = coverId
+    ? [coverId, ...restaurant.imageIds.filter((f) => f !== coverId)]
+    : restaurant.imageIds;
+  const heroPhotoUris = heroFileIds.map(getImageViewUrl);
 
   // Compute "this will displace X" copy for the confirmation sheet.
   // Only relevant when adding visited (displaces want_to_go) or vice versa.
@@ -606,7 +644,17 @@ export default function RestaurantDetailScreen() {
   const renderHeader = () => (
     <View>
       {/* ── Immersive hero ── */}
-      <View style={hs.hero}>
+      {/* Tapping the hero (anywhere but the overlaid buttons/pills, which claim
+          their own taps) opens the gallery. Disabled when there's no photo. */}
+      <Pressable
+        style={hs.hero}
+        onPress={() =>
+          heroPhotoUris.length > 0
+            ? setViewer({ photos: heroPhotoUris, index: 0 })
+            : undefined
+        }
+        disabled={heroPhotoUris.length === 0}
+      >
         {heroUrl ? (
           <Image
             source={{ uri: heroUrl }}
@@ -617,11 +665,7 @@ export default function RestaurantDetailScreen() {
           />
         ) : (
           <View style={[StyleSheet.absoluteFill, hs.heroPlaceholder]}>
-            <MaterialCommunityIcons
-              name="silverware-fork-knife"
-              size={48}
-              color={colors.border}
-            />
+            <UtensilsCrossed size={44} color={colors.border} strokeWidth={1.8} />
           </View>
         )}
 
@@ -633,11 +677,11 @@ export default function RestaurantDetailScreen() {
 
         {/* Floating top buttons */}
         <SafeAreaView style={hs.topBar} edges={["top"]}>
-          <FrostBtn icon="arrow-left" onPress={() => router.back()} />
+          <FrostBtn icon={ArrowLeft} onPress={() => router.back()} />
           <View style={hs.topRight}>
-            <FrostBtn icon="share-variant" onPress={handleShare} />
+            <FrostBtn icon={Share2} onPress={handleShare} />
             <FrostBtn
-              icon={savedStatus.favorite ? "heart" : "heart-outline"}
+              icon={Heart}
               active={!!savedStatus.favorite}
               onPress={() => handleSavePress("favorite")}
             />
@@ -658,11 +702,7 @@ export default function RestaurantDetailScreen() {
                 accessibilityRole="button"
                 accessibilityLabel={`See all ${stats.count} reviews`}
               >
-                <MaterialCommunityIcons
-                  name="star"
-                  size={14}
-                  color={colors.star}
-                />
+                <Star size={13} color={colors.star} fill={colors.star} />
                 <Text style={hs.ratingValue}>{stats.average.toFixed(1)}</Text>
                 <Text style={hs.ratingCount}>({stats.count})</Text>
               </Pressable>
@@ -700,30 +740,30 @@ export default function RestaurantDetailScreen() {
             </View>
           ) : null}
         </View>
-      </View>
+      </Pressable>
 
       {/* ── Content sheet (overlaps the hero) ── */}
       <View style={hs.sheet}>
         {/* Quick contact actions */}
         <View style={hs.quickRow}>
           <QuickTile
-            icon="directions"
+            icon={Navigation}
             label="Directions"
             onPress={handleDirections}
           />
           <QuickTile
-            icon="phone"
+            icon={Phone}
             label="Call"
             onPress={handleCall}
             disabled={!restaurant.phoneNumber}
           />
           <QuickTile
-            icon="web"
+            icon={Globe}
             label="Website"
             onPress={handleWebsite}
             disabled={!restaurant.websiteUrl}
           />
-          <QuickTile icon="share-variant" label="Share" onPress={handleShare} />
+          <QuickTile icon={Share2} label="Share" onPress={handleShare} />
         </View>
 
         {/* Own this business? Claim / verified-owner / pending */}
@@ -731,8 +771,18 @@ export default function RestaurantDetailScreen() {
           restaurant={restaurant}
           currentUserId={user?.id ?? null}
           onClaim={() => router.push(`/claim/${restaurant.id}`)}
-          onPromote={() => router.push(`/promote/${restaurant.id}`)}
-          onManageListing={() => router.push(`/listing/${restaurant.id}`)}
+          // Paid featuring + listing renewal are gated off for the free launch;
+          // the claim flow above stays available. See constants/features.ts.
+          onPromote={
+            PAID_FEATURES_ENABLED
+              ? () => router.push(`/promote/${restaurant.id}`)
+              : undefined
+          }
+          onManageListing={
+            PAID_FEATURES_ENABLED
+              ? () => router.push(`/listing/${restaurant.id}`)
+              : undefined
+          }
         />
 
         {/* About */}
@@ -767,21 +817,13 @@ export default function RestaurantDetailScreen() {
           <Text style={hs.h2}>Location & hours</Text>
           {restaurant.address ? (
             <Pressable style={hs.metaRow} onPress={handleDirections}>
-              <MaterialCommunityIcons
-                name="map-marker-outline"
-                size={18}
-                color={colors.primary}
-              />
+              <MapPin size={17} color={colors.primary} strokeWidth={2} />
               <Text style={hs.metaText}>{locationText}</Text>
             </Pressable>
           ) : null}
           {openStatus || todayHours ? (
             <View style={hs.metaRow}>
-              <MaterialCommunityIcons
-                name="clock-outline"
-                size={18}
-                color={colors.primary}
-              />
+              <Clock size={17} color={colors.primary} strokeWidth={2} />
               <Text style={hs.metaText}>
                 {openStatus ? (
                   <Text
@@ -810,16 +852,16 @@ export default function RestaurantDetailScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="View menu"
               >
-                <MaterialCommunityIcons
-                  name="silverware-fork-knife"
-                  size={18}
+                <UtensilsCrossed
+                  size={17}
                   color={colors.primary}
+                  strokeWidth={2}
                 />
                 <Text style={hs.menuBtnText}>View menu</Text>
-                <MaterialCommunityIcons
-                  name="chevron-right"
-                  size={18}
+                <ChevronRight
+                  size={17}
                   color={colors.primary}
+                  strokeWidth={2.2}
                   style={hs.menuBtnChevron}
                 />
               </Pressable>
@@ -834,18 +876,14 @@ export default function RestaurantDetailScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Edit menu"
               >
-                <MaterialCommunityIcons
-                  name="pencil-outline"
-                  size={18}
-                  color={colors.primary}
-                />
+                <Pencil size={17} color={colors.primary} strokeWidth={2} />
                 <Text style={hs.menuBtnText}>
                   {effectiveMenu.length > 0 ? "Edit menu" : "Add a menu"}
                 </Text>
-                <MaterialCommunityIcons
-                  name="chevron-right"
-                  size={18}
+                <ChevronRight
+                  size={17}
                   color={colors.primary}
+                  strokeWidth={2.2}
                   style={hs.menuBtnChevron}
                 />
               </Pressable>
@@ -858,21 +896,21 @@ export default function RestaurantDetailScreen() {
           <Text style={hs.h2}>Save to a list</Text>
           <View style={hs.listRow}>
             <ListChip
-              icon="heart"
+              icon={Heart}
               label="Favorite"
               active={!!savedStatus.favorite}
               onPress={() => handleSavePress("favorite")}
               disabled={saveBusy}
             />
             <ListChip
-              icon="bookmark"
+              icon={Bookmark}
               label="Want to go"
               active={!!savedStatus.want_to_go}
               onPress={() => handleSavePress("want_to_go")}
               disabled={saveBusy}
             />
             <ListChip
-              icon="check-circle"
+              icon={CircleCheck}
               label="Visited"
               active={!!savedStatus.visited}
               onPress={() => handleSavePress("visited")}
@@ -886,11 +924,7 @@ export default function RestaurantDetailScreen() {
               accessibilityRole="button"
               accessibilityLabel="Add to a collection"
             >
-              <MaterialCommunityIcons
-                name="playlist-plus"
-                size={18}
-                color={colors.primary}
-              />
+              <ListPlus size={17} color={colors.primary} strokeWidth={2} />
               <Text style={hs.addCollectionText}>Add to a collection</Text>
             </Pressable>
           ) : null}
@@ -908,7 +942,11 @@ export default function RestaurantDetailScreen() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={hs.photosContent}
             renderItem={({ item: fileId, index }) => (
-              <Pressable onPress={() => setActivePhotoIndex(index)}>
+              <Pressable
+                onPress={() =>
+                  setViewer({ photos: reviewPhotoUris, index })
+                }
+              >
                 <Image
                   source={{ uri: getImageViewUrl(fileId) }}
                   style={hs.photoThumb}
@@ -973,9 +1011,10 @@ export default function RestaurantDetailScreen() {
                 onDelete={handleDeleteReview}
                 onPhotoTap={(imageIds, startIndex) => {
                   const offset = allPhotoFileIds.indexOf(imageIds[0]);
-                  setActivePhotoIndex(
-                    offset >= 0 ? offset + startIndex : startIndex,
-                  );
+                  setViewer({
+                    photos: reviewPhotoUris,
+                    index: offset >= 0 ? offset + startIndex : startIndex,
+                  });
                 }}
                 onAuthorPress={(userId) => router.push(`/profile/${userId}`)}
                 onOpen={(r) => router.push(`/review/${r.id}`)}
@@ -992,10 +1031,10 @@ export default function RestaurantDetailScreen() {
                   accessibilityRole="button"
                   accessibilityLabel="More options"
                 >
-                  <MaterialCommunityIcons
-                    name="dots-vertical"
-                    size={20}
+                  <EllipsisVertical
+                    size={18}
                     color={colors.textMuted}
+                    strokeWidth={2}
                   />
                 </Pressable>
               ) : null}
@@ -1011,10 +1050,10 @@ export default function RestaurantDetailScreen() {
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <View style={styles.emptyIconWrap}>
-              <MaterialCommunityIcons
-                name="comment-text-outline"
-                size={32}
-                color={colors.primary}
+              <MessageSquareText
+                size={30}
+                color={colors.textPrimary}
+                strokeWidth={1.8}
               />
             </View>
             <Text style={styles.emptyTitle}>No reviews yet</Text>
@@ -1027,11 +1066,7 @@ export default function RestaurantDetailScreen() {
                 onPress={handleWriteReview}
                 fullWidth={false}
                 leftIcon={
-                  <MaterialCommunityIcons
-                    name="pencil"
-                    size={16}
-                    color={colors.white}
-                  />
+                  <Pencil size={15} color={colors.onPrimary} strokeWidth={2} />
                 }
               />
             </View>
@@ -1042,117 +1077,89 @@ export default function RestaurantDetailScreen() {
       {/* ── Review options bottom sheet — only used for reporting others'
           reviews. Author's own reviews use inline Edit/Delete buttons in
           ReviewItem, so they never open this sheet. ── */}
-      <Modal
+      <DraggableSheet
         visible={!!reviewToManage}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setReviewToManage(null)}
+        onClose={() => setReviewToManage(null)}
       >
+        <Text style={sheetStyles.title}>Manage Review</Text>
+
         <Pressable
-          style={sheetStyles.overlay}
+          style={sheetStyles.item}
+          onPress={() => {
+            const r = reviewToManage;
+            setReviewToManage(null);
+            Alert.alert("Report Review", "Report this review as inappropriate?", [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: "Report",
+                style: "destructive",
+                onPress: () => r && handleReportReview(r),
+              },
+            ]);
+          }}
+        >
+          <Flag size={20} color={colors.error} strokeWidth={2} />
+          <Text style={[sheetStyles.itemText, { color: colors.error }]}>
+            Report as Inappropriate
+          </Text>
+        </Pressable>
+
+        <Pressable
+          style={sheetStyles.item}
+          onPress={() => {
+            const r = reviewToManage;
+            const uname = manageAuthor?.username;
+            setReviewToManage(null);
+            Alert.alert(
+              "Block user",
+              uname
+                ? `Block @${uname}? You won't see each other's reviews or comments.`
+                : "Block this user? You won't see each other's reviews or comments.",
+              [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Block",
+                  style: "destructive",
+                  onPress: () => r && handleBlockUser(r),
+                },
+              ],
+            );
+          }}
+        >
+          <UserX size={20} color={colors.textPrimary} strokeWidth={2} />
+          <Text style={sheetStyles.itemText}>
+            {manageAuthor?.username
+              ? `Block @${manageAuthor.username}`
+              : "Block user"}
+          </Text>
+        </Pressable>
+
+        <Pressable
+          style={sheetStyles.cancelBtn}
           onPress={() => setReviewToManage(null)}
         >
-          <View style={sheetStyles.sheet}>
-            <View style={sheetStyles.handle} />
-            <Text style={sheetStyles.title}>Manage Review</Text>
-
-            <Pressable
-              style={sheetStyles.item}
-              onPress={() => {
-                const r = reviewToManage;
-                setReviewToManage(null);
-                Alert.alert(
-                  "Report Review",
-                  "Report this review as inappropriate?",
-                  [
-                    { text: "Cancel", style: "cancel" },
-                    {
-                      text: "Report",
-                      style: "destructive",
-                      onPress: () => r && handleReportReview(r),
-                    },
-                  ],
-                );
-              }}
-            >
-              <MaterialCommunityIcons
-                name="flag-outline"
-                size={22}
-                color={colors.error}
-              />
-              <Text style={[sheetStyles.itemText, { color: colors.error }]}>
-                Report as Inappropriate
-              </Text>
-            </Pressable>
-
-            <Pressable
-              style={sheetStyles.item}
-              onPress={() => {
-                const r = reviewToManage;
-                const uname = manageAuthor?.username;
-                setReviewToManage(null);
-                Alert.alert(
-                  "Block user",
-                  uname
-                    ? `Block @${uname}? You won't see each other's reviews or comments.`
-                    : "Block this user? You won't see each other's reviews or comments.",
-                  [
-                    { text: "Cancel", style: "cancel" },
-                    {
-                      text: "Block",
-                      style: "destructive",
-                      onPress: () => r && handleBlockUser(r),
-                    },
-                  ],
-                );
-              }}
-            >
-              <MaterialCommunityIcons
-                name="account-cancel-outline"
-                size={22}
-                color={colors.textPrimary}
-              />
-              <Text style={sheetStyles.itemText}>
-                {manageAuthor?.username
-                  ? `Block @${manageAuthor.username}`
-                  : "Block user"}
-              </Text>
-            </Pressable>
-
-            <Pressable
-              style={sheetStyles.cancelBtn}
-              onPress={() => setReviewToManage(null)}
-            >
-              <Text style={sheetStyles.cancelText}>Cancel</Text>
-            </Pressable>
-          </View>
+          <Text style={sheetStyles.cancelText}>Cancel</Text>
         </Pressable>
-      </Modal>
+      </DraggableSheet>
 
       {/* ── Save confirmation bottom sheet ── */}
-      <Modal
+      <DraggableSheet
         visible={pendingSave !== null}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setPendingSave(null)}
+        onClose={() => setPendingSave(null)}
       >
-        <Pressable
-          style={sheetStyles.overlay}
-          onPress={() => setPendingSave(null)}
-        >
-          <Pressable
-            style={sheetStyles.sheet}
-            onPress={(e) => e.stopPropagation()}
-          >
-            <View style={sheetStyles.handle} />
-            {pendingSave ? (
+        {pendingSave ? (
               <>
                 <View style={confirmStyles.iconWrap}>
-                  <MaterialCommunityIcons
-                    name={LIST_TYPE_CONFIG[pendingSave].icon}
-                    size={28}
-                    color={colors.primary}
-                  />
+                  {(() => {
+                    const PendingIcon = LIST_TYPE_CONFIG[pendingSave].icon;
+                    return (
+                      <PendingIcon
+                        size={26}
+                        color={colors.textPrimary}
+                        strokeWidth={1.8}
+                      />
+                    );
+                  })()}
                 </View>
                 <Text style={confirmStyles.title}>
                   {LIST_TYPE_CONFIG[pendingSave].addTitle}
@@ -1162,11 +1169,7 @@ export default function RestaurantDetailScreen() {
                 </Text>
                 {pendingDisplaces ? (
                   <View style={confirmStyles.displaceRow}>
-                    <MaterialCommunityIcons
-                      name="information-outline"
-                      size={16}
-                      color={colors.textMuted}
-                    />
+                    <Info size={15} color={colors.textMuted} strokeWidth={2} />
                     <Text style={confirmStyles.displaceText}>
                       This will remove it from{" "}
                       {LIST_TYPE_CONFIG[pendingDisplaces].label}.
@@ -1191,56 +1194,14 @@ export default function RestaurantDetailScreen() {
                 </Pressable>
               </>
             ) : null}
-          </Pressable>
-        </Pressable>
-      </Modal>
+      </DraggableSheet>
 
       {/* ── Full-screen photo viewer ── */}
-      <Modal
-        visible={activePhotoIndex !== null}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setActivePhotoIndex(null)}
-      >
-        <View style={photoStyles.overlay}>
-          <SafeAreaView style={{ flex: 1 }}>
-            <Pressable
-              style={photoStyles.closeBtn}
-              onPress={() => setActivePhotoIndex(null)}
-              hitSlop={10}
-            >
-              <MaterialCommunityIcons
-                name="close"
-                size={22}
-                color={colors.white}
-              />
-            </Pressable>
-            <FlatList
-              data={allPhotoFileIds}
-              keyExtractor={(id, i) => `viewer-${id}-${i}`}
-              horizontal
-              pagingEnabled
-              showsHorizontalScrollIndicator={false}
-              initialScrollIndex={activePhotoIndex ?? 0}
-              getItemLayout={(_, index) => ({
-                length: SW,
-                offset: SW * index,
-                index,
-              })}
-              renderItem={({ item: fileId }) => (
-                <View style={{ width: SW, justifyContent: "center" }}>
-                  <Image
-                    source={{ uri: getImageViewUrl(fileId) }}
-                    style={{ width: SW, height: SW * 1.1 }}
-                    contentFit="contain"
-                    cachePolicy="memory-disk"
-                  />
-                </View>
-              )}
-            />
-          </SafeAreaView>
-        </View>
-      </Modal>
+      <PhotoViewer
+        photos={viewer?.photos ?? []}
+        index={viewer?.index ?? null}
+        onClose={() => setViewer(null)}
+      />
 
       <AddToListSheet
         visible={addToListOpen}
@@ -1272,10 +1233,11 @@ export default function RestaurantDetailScreen() {
           accessibilityRole="button"
           accessibilityLabel="Save to favorites"
         >
-          <MaterialCommunityIcons
-            name={savedStatus.favorite ? "heart" : "heart-outline"}
-            size={24}
+          <Heart
+            size={22}
             color={savedStatus.favorite ? colors.primary : colors.textSecondary}
+            fill={savedStatus.favorite ? colors.primary : "transparent"}
+            strokeWidth={2}
           />
         </Pressable>
         <Pressable
@@ -1284,11 +1246,7 @@ export default function RestaurantDetailScreen() {
           accessibilityRole="button"
           accessibilityLabel="Directions"
         >
-          <MaterialCommunityIcons
-            name="directions"
-            size={20}
-            color={colors.textPrimary}
-          />
+          <Navigation size={18} color={colors.textPrimary} strokeWidth={2} />
           <Text style={stickyStyles.dirText}>Directions</Text>
         </Pressable>
         <Pressable
@@ -1297,11 +1255,11 @@ export default function RestaurantDetailScreen() {
           accessibilityRole="button"
           accessibilityLabel={myReview ? "Edit your review" : "Write a review"}
         >
-          <MaterialCommunityIcons
-            name={myReview ? "pencil" : "star-plus"}
-            size={20}
-            color={colors.textInverse}
-          />
+          {myReview ? (
+            <Pencil size={18} color={colors.onPrimary} strokeWidth={2} />
+          ) : (
+            <SquarePen size={18} color={colors.onPrimary} strokeWidth={2} />
+          )}
           <Text style={stickyStyles.reviewText}>
             {myReview ? "Edit review" : "Write a review"}
           </Text>
@@ -1315,11 +1273,11 @@ export default function RestaurantDetailScreen() {
 
 // Floating frosted button over the hero image.
 function FrostBtn({
-  icon,
+  icon: Icon,
   onPress,
   active,
 }: {
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: LucideIcon;
   onPress: () => void;
   active?: boolean;
 }) {
@@ -1331,10 +1289,11 @@ function FrostBtn({
       style={[frost.btn, active && frost.btnActive]}
       accessibilityRole="button"
     >
-      <MaterialCommunityIcons
-        name={icon}
-        size={20}
+      <Icon
+        size={19}
         color={active ? colors.primary : "#FFFFFF"}
+        fill={active ? colors.primary : "transparent"}
+        strokeWidth={2}
       />
     </Pressable>
   );
@@ -1342,12 +1301,12 @@ function FrostBtn({
 
 // Quick contact tile (Directions / Call / Website / Share).
 function QuickTile({
-  icon,
+  icon: Icon,
   label,
   onPress,
   disabled,
 }: {
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: LucideIcon;
   label: string;
   onPress: () => void;
   disabled?: boolean;
@@ -1361,10 +1320,10 @@ function QuickTile({
       accessibilityRole="button"
       accessibilityLabel={label}
     >
-      <MaterialCommunityIcons
-        name={icon}
-        size={20}
+      <Icon
+        size={19}
         color={disabled ? colors.textMuted : colors.primary}
+        strokeWidth={2}
       />
       <Text
         style={[hs.quickLabel, disabled && { color: colors.textMuted }]}
@@ -1378,13 +1337,13 @@ function QuickTile({
 
 // Toggle chip for the "Save to a list" row.
 function ListChip({
-  icon,
+  icon: Icon,
   label,
   active,
   onPress,
   disabled,
 }: {
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: LucideIcon;
   label: string;
   active: boolean;
   onPress: () => void;
@@ -1399,10 +1358,10 @@ function ListChip({
       accessibilityRole="button"
       accessibilityState={{ selected: active }}
     >
-      <MaterialCommunityIcons
-        name={icon}
-        size={16}
+      <Icon
+        size={15}
         color={active ? colors.primary : colors.textSecondary}
+        strokeWidth={active ? 2.4 : 2}
       />
       <Text style={[hs.listChipText, active && hs.listChipTextActive]}>
         {label}
@@ -1460,7 +1419,7 @@ function makeStyles(c: ThemeColors) {
     width: 72,
     height: 72,
     borderRadius: radius.full,
-    backgroundColor: colors.primaryLight,
+    backgroundColor: colors.surface,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1541,7 +1500,7 @@ function makeHsStyles(c: ThemeColors) {
     color: "rgba(255,255,255,0.85)",
   },
   newPill: {
-    backgroundColor: "rgba(255,255,255,0.18)",
+    backgroundColor: colors.accent,
     borderRadius: radius.full,
     paddingHorizontal: spacing.sm + 2,
     paddingVertical: 4,
@@ -1613,9 +1572,7 @@ function makeHsStyles(c: ThemeColors) {
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.md,
     borderRadius: radius.lg,
-    backgroundColor: colors.primaryLight,
-    borderWidth: 1,
-    borderColor: colors.primary,
+    backgroundColor: colors.surface,
   },
   menuBtnText: {
     fontFamily: fonts.bold,
@@ -1826,7 +1783,7 @@ function makeStickyStyles(c: ThemeColors) {
   reviewText: {
     fontFamily: fonts.bold,
     fontSize: T.size.base,
-    color: colors.textInverse,
+    color: colors.onPrimary,
   },
   });
 }
@@ -1834,26 +1791,8 @@ function makeStickyStyles(c: ThemeColors) {
 function makeSheetStyles(c: ThemeColors) {
   const colors = c;
   return StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
-    justifyContent: "flex-end",
-  },
-  sheet: {
-    backgroundColor: colors.cardBackground,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    padding: spacing.xxl,
-    paddingBottom: Platform.OS === "ios" ? 40 : spacing.xxl,
-  },
-  handle: {
-    width: 40,
-    height: 4,
-    backgroundColor: colors.divider,
-    borderRadius: 2,
-    alignSelf: "center",
-    marginBottom: spacing.lg,
-  },
+  // Sheet chrome (backdrop, rounded sheet, drag handle) now lives in
+  // DraggableSheet; only the inner content styles remain here.
   title: {
     fontFamily: fonts.bold,
     fontSize: T.size.xl,
@@ -1899,7 +1838,7 @@ function makeConfirmStyles(c: ThemeColors) {
     width: 64,
     height: 64,
     borderRadius: radius.full,
-    backgroundColor: colors.primaryLight,
+    backgroundColor: colors.surface,
     alignItems: "center",
     justifyContent: "center",
     alignSelf: "center",
@@ -1949,23 +1888,8 @@ function makeConfirmStyles(c: ThemeColors) {
   confirmText: {
     fontFamily: fonts.bold,
     fontSize: T.size.base,
-    color: colors.textInverse,
+    color: colors.onPrimary,
   },
   });
 }
 
-const photoStyles = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.96)" },
-  closeBtn: {
-    position: "absolute",
-    top: spacing.xl,
-    right: spacing.screen,
-    zIndex: 10,
-    width: 40,
-    height: 40,
-    borderRadius: radius.full,
-    backgroundColor: "rgba(255,255,255,0.15)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-});

@@ -8,7 +8,7 @@
 //
 // Progress ("N more to the next tier") only shows for your OWN badges.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { ArrowLeft, CircleCheck, Lock } from "lucide-react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
@@ -89,11 +89,7 @@ export default function BadgesScreen() {
             accessibilityRole="button"
             accessibilityLabel="Go back"
           >
-            <MaterialCommunityIcons
-              name="arrow-left"
-              size={22}
-              color={colors.textPrimary}
-            />
+            <ArrowLeft size={20} color={colors.textPrimary} strokeWidth={2.2} />
           </Pressable>
           <Text style={styles.headerTitle}>Reviewer Badges</Text>
           <View style={{ width: 36 }} />
@@ -185,10 +181,10 @@ function TierRow({ tier }: { tier: LadderTier }) {
           !tier.earned && { borderWidth: 1, borderColor: colors.divider },
         ]}
       >
-        <MaterialCommunityIcons
-          name={tier.badge.icon as keyof typeof MaterialCommunityIcons.glyphMap}
-          size={22}
+        <tier.badge.icon
+          size={20}
           color={tier.earned ? colors.white : colors.textMuted}
+          strokeWidth={2}
         />
       </View>
 
@@ -208,11 +204,11 @@ function TierRow({ tier }: { tier: LadderTier }) {
         </Text>
       </View>
 
-      <MaterialCommunityIcons
-        name={tier.earned ? "check-circle" : "lock-outline"}
-        size={22}
-        color={tier.earned ? colors.success : colors.textMuted}
-      />
+      {tier.earned ? (
+        <CircleCheck size={20} color={colors.success} strokeWidth={2} />
+      ) : (
+        <Lock size={20} color={colors.textMuted} strokeWidth={2} />
+      )}
     </View>
   );
 }

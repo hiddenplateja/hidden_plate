@@ -25,12 +25,30 @@
 //   favorites yet" identical to a brand-new user, making them think
 //   their saves had vanished.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import {
+  ArrowDownAZ,
+  ArrowUpDown,
+  Bookmark,
+  CalendarPlus,
+  Check,
+  ChevronDown,
+  CircleCheck,
+  CircleX,
+  Clock,
+  CloudOff,
+  Earth,
+  Heart,
+  Library,
+  MapPin,
+  Search,
+  Star,
+  X,
+  type LucideIcon,
+} from "lucide-react-native";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
   FlatList,
-  Modal,
   Pressable,
   RefreshControl,
   StyleSheet,
@@ -43,6 +61,7 @@ import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { CategoryChips, TileChip } from "@/components/CategoryChips";
+import { DraggableSheet } from "@/components/DraggableSheet";
 import { ErrorState } from "@/components/ErrorState";
 import {
   RestaurantSmallCard,
@@ -66,7 +85,7 @@ import { useThemedStyles } from "@/theme/useThemedStyles";
 interface TabConfig {
   type: ListType;
   label: string;
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: LucideIcon;
   emptyTitle: string;
   emptyBody: string;
 }
@@ -76,7 +95,7 @@ type SortKey = "newest_saved" | "recent_added" | "rating" | "name";
 interface SortOption {
   key: SortKey;
   label: string;
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: LucideIcon;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -85,7 +104,7 @@ const TABS: TabConfig[] = [
   {
     type: "favorite",
     label: "Favorites",
-    icon: "heart-outline",
+    icon: Heart,
     emptyTitle: "No favorites yet",
     emptyBody:
       "Tap the heart on any restaurant to add it here for quick access.",
@@ -93,7 +112,7 @@ const TABS: TabConfig[] = [
   {
     type: "want_to_go",
     label: "Want to Go",
-    icon: "bookmark-outline",
+    icon: Bookmark,
     emptyTitle: "Nothing bookmarked yet",
     emptyBody:
       "Found a spot you want to try? Tap the bookmark to save it for later.",
@@ -101,7 +120,7 @@ const TABS: TabConfig[] = [
   {
     type: "visited",
     label: "Visited",
-    icon: "check-circle-outline",
+    icon: CircleCheck,
     emptyTitle: "No visits yet",
     emptyBody:
       "Mark restaurants as visited to keep track of where you've eaten.",
@@ -109,10 +128,10 @@ const TABS: TabConfig[] = [
 ];
 
 const SORT_OPTIONS: SortOption[] = [
-  { key: "newest_saved", label: "Newest saved", icon: "clock-outline" },
-  { key: "recent_added", label: "Recently added", icon: "calendar-plus" },
-  { key: "rating", label: "Highest rated", icon: "star" },
-  { key: "name", label: "A to Z", icon: "sort-alphabetical-ascending" },
+  { key: "newest_saved", label: "Newest saved", icon: Clock },
+  { key: "recent_added", label: "Recently added", icon: CalendarPlus },
+  { key: "rating", label: "Highest rated", icon: Star },
+  { key: "name", label: "A to Z", icon: ArrowDownAZ },
 ];
 
 // Stable empty fallback so the filter memos don't churn while a tab loads.
@@ -298,11 +317,7 @@ export default function SavedScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="My collections"
               >
-                <MaterialCommunityIcons
-                  name="bookmark-multiple-outline"
-                  size={22}
-                  color={colors.textPrimary}
-                />
+                <Library size={20} color={colors.textPrimary} strokeWidth={2} />
               </Pressable>
             ) : null}
           </View>
@@ -323,13 +338,15 @@ export default function SavedScreen() {
                   searchVisible ? "Close search" : "Open search"
                 }
               >
-                <MaterialCommunityIcons
-                  name={searchVisible ? "close" : "magnify"}
-                  size={22}
-                  color={
-                    searchVisible ? colors.textInverse : colors.textPrimary
-                  }
-                />
+                {searchVisible ? (
+                  <X size={20} color={colors.onPrimary} strokeWidth={2.2} />
+                ) : (
+                  <Search
+                    size={20}
+                    color={colors.textPrimary}
+                    strokeWidth={2.2}
+                  />
+                )}
               </Pressable>
             ) : null}
           </View>
@@ -349,10 +366,10 @@ export default function SavedScreen() {
               accessibilityState={{ selected: isActive }}
             >
               <View style={styles.tabLabelRow}>
-                <MaterialCommunityIcons
-                  name={tab.icon}
-                  size={15}
+                <tab.icon
+                  size={14}
                   color={isActive ? colors.textPrimary : colors.textMuted}
+                  strokeWidth={isActive ? 2.4 : 2}
                 />
                 <Text
                   style={[styles.tabLabel, isActive && styles.tabLabelActive]}
@@ -382,10 +399,10 @@ export default function SavedScreen() {
               exiting={FadeOut.duration(150)}
               style={styles.searchBar}
             >
-              <MaterialCommunityIcons
-                name="magnify"
-                size={20}
+              <Search
+                size={19}
                 color={colors.textSecondary}
+                strokeWidth={2.2}
                 style={{ marginRight: spacing.sm }}
               />
               <TextInput
@@ -399,11 +416,7 @@ export default function SavedScreen() {
               />
               {searchQuery.length > 0 ? (
                 <Pressable onPress={() => setSearchQuery("")} hitSlop={8}>
-                  <MaterialCommunityIcons
-                    name="close-circle"
-                    size={18}
-                    color={colors.textMuted}
-                  />
+                  <CircleX size={17} color={colors.textMuted} strokeWidth={2} />
                 </Pressable>
               ) : null}
             </Animated.View>
@@ -416,7 +429,7 @@ export default function SavedScreen() {
             trailing={
               availableCities.length > 0 ? (
                 <TileChip
-                  icon="map-marker"
+                  icon={MapPin}
                   label={cityFilter ?? "City"}
                   active={!!cityFilter}
                   onPress={() => setCityPickerOpen(true)}
@@ -438,17 +451,9 @@ export default function SavedScreen() {
               accessibilityRole="button"
               accessibilityLabel="Change sort order"
             >
-              <MaterialCommunityIcons
-                name="sort-variant"
-                size={16}
-                color={colors.primary}
-              />
+              <ArrowUpDown size={14} color={colors.white} strokeWidth={2.2} />
               <Text style={styles.sortBtnLabel}>{currentSortLabel}</Text>
-              <MaterialCommunityIcons
-                name="chevron-down"
-                size={14}
-                color={colors.primary}
-              />
+              <ChevronDown size={13} color={colors.white} strokeWidth={2.2} />
             </Pressable>
           </View>
         </View>
@@ -457,7 +462,7 @@ export default function SavedScreen() {
       {showError ? (
         <ErrorState
           variant="screen"
-          icon="cloud-off-outline"
+          icon={CloudOff}
           title="Couldn't load your saved spots"
           body="Check your connection and try again."
           onRetry={handleRetry}
@@ -473,10 +478,10 @@ export default function SavedScreen() {
       ) : isGenuinelyEmpty ? (
         <View style={styles.center}>
           <View style={styles.emptyIconWrap}>
-            <MaterialCommunityIcons
-              name={currentTabConfig.icon}
-              size={32}
-              color={colors.primary}
+            <currentTabConfig.icon
+              size={30}
+              color={colors.textPrimary}
+              strokeWidth={1.8}
             />
           </View>
           <Text style={styles.emptyTitle}>{currentTabConfig.emptyTitle}</Text>
@@ -485,11 +490,7 @@ export default function SavedScreen() {
       ) : filteredItems.length === 0 ? (
         <View style={styles.center}>
           <View style={styles.emptyIconWrap}>
-            <MaterialCommunityIcons
-              name="magnify"
-              size={32}
-              color={colors.primary}
-            />
+            <Search size={30} color={colors.textPrimary} strokeWidth={1.8} />
           </View>
           <Text style={styles.emptyTitle}>No matches</Text>
           <Text style={styles.emptyBody}>
@@ -524,158 +525,124 @@ export default function SavedScreen() {
       )}
 
       {/* Sort picker sheet */}
-      <Modal
+      <DraggableSheet
         visible={sortPickerOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setSortPickerOpen(false)}
+        onClose={() => setSortPickerOpen(false)}
       >
-        <Pressable
-          style={styles.modalBackdrop}
-          onPress={() => setSortPickerOpen(false)}
-        >
-          <Pressable
-            style={styles.modalSheet}
-            onPress={(e) => e.stopPropagation()}
-          >
-            <View style={styles.modalHandle} />
-            <Text style={styles.modalTitle}>Sort by</Text>
-            {SORT_OPTIONS.map((option) => {
-              const isActive = sortKey === option.key;
-              return (
-                <Pressable
-                  key={option.key}
-                  onPress={() => {
-                    setSortKey(option.key);
-                    setSortPickerOpen(false);
-                  }}
-                  style={[
-                    styles.modalOption,
-                    isActive && styles.modalOptionActive,
-                  ]}
-                >
-                  <MaterialCommunityIcons
-                    name={option.icon}
-                    size={20}
-                    color={isActive ? colors.primary : colors.textSecondary}
-                  />
-                  <Text
-                    style={[
-                      styles.modalOptionLabel,
-                      isActive && styles.modalOptionLabelActive,
-                    ]}
-                  >
-                    {option.label}
-                  </Text>
-                  {isActive ? (
-                    <MaterialCommunityIcons
-                      name="check"
-                      size={20}
-                      color={colors.primary}
-                      style={{ marginLeft: "auto" }}
-                    />
-                  ) : null}
-                </Pressable>
-              );
-            })}
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      {/* City picker sheet */}
-      <Modal
-        visible={cityPickerOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setCityPickerOpen(false)}
-      >
-        <Pressable
-          style={styles.modalBackdrop}
-          onPress={() => setCityPickerOpen(false)}
-        >
-          <Pressable
-            style={styles.modalSheet}
-            onPress={(e) => e.stopPropagation()}
-          >
-            <View style={styles.modalHandle} />
-            <Text style={styles.modalTitle}>Filter by city</Text>
-
+        <Text style={styles.modalTitle}>Sort by</Text>
+        {SORT_OPTIONS.map((option) => {
+          const isActive = sortKey === option.key;
+          return (
             <Pressable
+              key={option.key}
               onPress={() => {
-                setCityFilter(null);
-                setCityPickerOpen(false);
+                setSortKey(option.key);
+                setSortPickerOpen(false);
               }}
-              style={[
-                styles.modalOption,
-                cityFilter === null && styles.modalOptionActive,
-              ]}
+              style={[styles.modalOption, isActive && styles.modalOptionActive]}
             >
-              <MaterialCommunityIcons
-                name="earth"
-                size={20}
-                color={
-                  cityFilter === null ? colors.primary : colors.textSecondary
-                }
+              <option.icon
+                size={18}
+                color={isActive ? colors.primary : colors.textSecondary}
+                strokeWidth={2}
               />
               <Text
                 style={[
                   styles.modalOptionLabel,
-                  cityFilter === null && styles.modalOptionLabelActive,
+                  isActive && styles.modalOptionLabelActive,
                 ]}
               >
-                All cities
+                {option.label}
               </Text>
-              {cityFilter === null ? (
-                <MaterialCommunityIcons
-                  name="check"
-                  size={20}
+              {isActive ? (
+                <Check
+                  size={18}
                   color={colors.primary}
+                  strokeWidth={2.4}
                   style={{ marginLeft: "auto" }}
                 />
               ) : null}
             </Pressable>
+          );
+        })}
+      </DraggableSheet>
 
-            {availableCities.map((city) => {
-              const isActive = cityFilter === city;
-              return (
-                <Pressable
-                  key={city}
-                  onPress={() => {
-                    setCityFilter(city);
-                    setCityPickerOpen(false);
-                  }}
-                  style={[
-                    styles.modalOption,
-                    isActive && styles.modalOptionActive,
-                  ]}
-                >
-                  <MaterialCommunityIcons
-                    name="map-marker"
-                    size={20}
-                    color={isActive ? colors.primary : colors.textSecondary}
-                  />
-                  <Text
-                    style={[
-                      styles.modalOptionLabel,
-                      isActive && styles.modalOptionLabelActive,
-                    ]}
-                  >
-                    {city}
-                  </Text>
-                  {isActive ? (
-                    <MaterialCommunityIcons
-                      name="check"
-                      size={20}
-                      color={colors.primary}
-                      style={{ marginLeft: "auto" }}
-                    />
-                  ) : null}
-                </Pressable>
-              );
-            })}
-          </Pressable>
+      {/* City picker sheet */}
+      <DraggableSheet
+        visible={cityPickerOpen}
+        onClose={() => setCityPickerOpen(false)}
+      >
+        <Text style={styles.modalTitle}>Filter by city</Text>
+
+        <Pressable
+          onPress={() => {
+            setCityFilter(null);
+            setCityPickerOpen(false);
+          }}
+          style={[
+            styles.modalOption,
+            cityFilter === null && styles.modalOptionActive,
+          ]}
+        >
+          <Earth
+            size={18}
+            color={cityFilter === null ? colors.primary : colors.textSecondary}
+            strokeWidth={2}
+          />
+          <Text
+            style={[
+              styles.modalOptionLabel,
+              cityFilter === null && styles.modalOptionLabelActive,
+            ]}
+          >
+            All cities
+          </Text>
+          {cityFilter === null ? (
+            <Check
+              size={18}
+              color={colors.primary}
+              strokeWidth={2.4}
+              style={{ marginLeft: "auto" }}
+            />
+          ) : null}
         </Pressable>
-      </Modal>
+
+        {availableCities.map((city) => {
+          const isActive = cityFilter === city;
+          return (
+            <Pressable
+              key={city}
+              onPress={() => {
+                setCityFilter(city);
+                setCityPickerOpen(false);
+              }}
+              style={[styles.modalOption, isActive && styles.modalOptionActive]}
+            >
+              <MapPin
+                size={18}
+                color={isActive ? colors.primary : colors.textSecondary}
+                strokeWidth={2}
+              />
+              <Text
+                style={[
+                  styles.modalOptionLabel,
+                  isActive && styles.modalOptionLabelActive,
+                ]}
+              >
+                {city}
+              </Text>
+              {isActive ? (
+                <Check
+                  size={18}
+                  color={colors.primary}
+                  strokeWidth={2.4}
+                  style={{ marginLeft: "auto" }}
+                />
+              ) : null}
+            </Pressable>
+          );
+        })}
+      </DraggableSheet>
     </SafeAreaView>
   );
 }
@@ -813,17 +780,15 @@ function makeStyles(c: ThemeColors) {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    paddingVertical: 4,
-    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    paddingHorizontal: spacing.sm + 2,
     borderRadius: radius.full,
-    backgroundColor: colors.primaryLight,
-    borderWidth: 1,
-    borderColor: colors.primary,
+    backgroundColor: colors.accent,
   },
   sortBtnLabel: {
     fontFamily: fonts.bold,
     fontSize: T.size.xs,
-    color: colors.primary,
+    color: colors.white,
   },
 
   listContent: {
@@ -857,7 +822,7 @@ function makeStyles(c: ThemeColors) {
     width: 72,
     height: 72,
     borderRadius: radius.full,
-    backgroundColor: colors.primaryLight,
+    backgroundColor: colors.surface,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: spacing.sm,
@@ -877,29 +842,9 @@ function makeStyles(c: ThemeColors) {
     paddingHorizontal: spacing.lg,
   },
 
-  // Modal sheets (sort + city)
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "flex-end",
-  },
-  modalSheet: {
-    backgroundColor: colors.cardBackground,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    paddingBottom: spacing.huge,
-    paddingTop: spacing.md,
-    paddingHorizontal: spacing.screen,
-    ...shadows.md,
-  },
-  modalHandle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.divider,
-    alignSelf: "center",
-    marginBottom: spacing.lg,
-  },
+  // Modal sheets (sort + city) — the sheet chrome (backdrop, rounded sheet,
+  // drag handle) now lives in DraggableSheet; only the inner content styles
+  // remain here.
   modalTitle: {
     fontFamily: fonts.bold,
     fontSize: T.size.lg,

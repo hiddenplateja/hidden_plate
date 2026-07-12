@@ -13,8 +13,14 @@
 // indicator (older Android, on-screen buttons), the inset is 0 and the
 // bar reverts to its base dimensions.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
+import {
+  Bookmark,
+  CircleUserRound,
+  House,
+  Map,
+  Users,
+} from "lucide-react-native";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -53,8 +59,8 @@ export default function TabsLayout() {
         name="index"
         options={{
           title: "Discover",
-          tabBarIcon: ({ color, size }) => (
-            <MaterialCommunityIcons name="home-outline" size={size} color={color} />
+          tabBarIcon: ({ color, size, focused }) => (
+            <House size={size} color={color} strokeWidth={focused ? 2.4 : 2} />
           ),
         }}
       />
@@ -62,11 +68,11 @@ export default function TabsLayout() {
         name="saved"
         options={{
           title: "Saved",
-          tabBarIcon: ({ color, size }) => (
-            <MaterialCommunityIcons
-              name="bookmark-outline"
+          tabBarIcon: ({ color, size, focused }) => (
+            <Bookmark
               size={size}
               color={color}
+              strokeWidth={focused ? 2.4 : 2}
             />
           ),
         }}
@@ -77,7 +83,7 @@ export default function TabsLayout() {
         options={{
           title: "Map",
           // Raised above the other tabs — an elevated circular tile that pops
-          // off the bar (coral when active, light surface when not).
+          // off the bar (ink when active, light surface when not).
           tabBarIcon: ({ focused, color }) => (
             <View
               style={{
@@ -93,10 +99,10 @@ export default function TabsLayout() {
                 ...shadows.sm,
               }}
             >
-              <MaterialCommunityIcons
-                name="map-outline"
-                size={24}
-                color={focused ? colors.textInverse : color}
+              <Map
+                size={22}
+                color={focused ? colors.onPrimary : color}
+                strokeWidth={2}
               />
             </View>
           ),
@@ -106,12 +112,8 @@ export default function TabsLayout() {
         name="community"
         options={{
           title: "Community",
-          tabBarIcon: ({ color, size }) => (
-            <MaterialCommunityIcons
-              name="account-group-outline"
-              size={size}
-              color={color}
-            />
+          tabBarIcon: ({ color, size, focused }) => (
+            <Users size={size} color={color} strokeWidth={focused ? 2.4 : 2} />
           ),
         }}
       />
@@ -120,11 +122,11 @@ export default function TabsLayout() {
         name="profile"
         options={{
           title: "Profile",
-          tabBarIcon: ({ color, size }) => (
-            <MaterialCommunityIcons
-              name="account-circle-outline"
+          tabBarIcon: ({ color, size, focused }) => (
+            <CircleUserRound
               size={size}
               color={color}
+              strokeWidth={focused ? 2.4 : 2}
             />
           ),
         }}

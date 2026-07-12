@@ -9,7 +9,7 @@
 // Follows the same custom-header pattern as app/settings.tsx (the app hides
 // the native stack header).
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { ArrowLeft, CloudOff, User as UserIcon, UserX } from "lucide-react-native";
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
@@ -139,11 +139,7 @@ export default function BlockedUsersScreen() {
             />
           ) : (
             <View style={[styles.avatar, styles.avatarPlaceholder]}>
-              <MaterialCommunityIcons
-                name="account"
-                size={22}
-                color={colors.textMuted}
-              />
+              <UserIcon size={20} color={colors.textMuted} strokeWidth={2} />
             </View>
           )}
 
@@ -185,11 +181,7 @@ export default function BlockedUsersScreen() {
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >
-          <MaterialCommunityIcons
-            name="arrow-left"
-            size={22}
-            color={colors.textPrimary}
-          />
+          <ArrowLeft size={20} color={colors.textPrimary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.headerTitle}>Blocked Users</Text>
         <View style={{ width: 36 }} />
@@ -202,7 +194,7 @@ export default function BlockedUsersScreen() {
       ) : state.status === "error" ? (
         <ErrorState
           variant="screen"
-          icon="cloud-off-outline"
+          icon={CloudOff}
           title="Couldn't load blocked users"
           body={state.message}
           onRetry={() => load()}
@@ -228,11 +220,7 @@ export default function BlockedUsersScreen() {
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <View style={styles.emptyIconWrap}>
-                <MaterialCommunityIcons
-                  name="account-cancel-outline"
-                  size={32}
-                  color={colors.primary}
-                />
+                <UserX size={30} color={colors.textPrimary} strokeWidth={1.8} />
               </View>
               <Text style={styles.emptyTitle}>No blocked users</Text>
               <Text style={styles.emptyBody}>

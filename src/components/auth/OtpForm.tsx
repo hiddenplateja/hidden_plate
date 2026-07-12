@@ -5,7 +5,7 @@
 // (or pass `autoSend` to have this fire it on mount) and supplies onVerify /
 // onResend.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { RotateCw } from "lucide-react-native";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
@@ -140,11 +140,7 @@ export function OtpForm({
             accessibilityRole="button"
             accessibilityLabel="Resend verification code"
           >
-            <MaterialCommunityIcons
-              name="refresh"
-              size={16}
-              color={colors.primary}
-            />
+            <RotateCw size={15} color={colors.primary} strokeWidth={2.2} />
             <Text style={styles.resendLink}>
               {sending ? "Sending…" : "Resend code"}
             </Text>
@@ -173,12 +169,12 @@ function makeStyles(c: ThemeColors) {
       height: 64,
       borderRadius: radius.lg,
       borderWidth: 1.5,
-      borderColor: colors.border,
-      backgroundColor: colors.pageBackground,
+      borderColor: "transparent",
+      backgroundColor: colors.surface,
       textAlign: "center",
       fontFamily: fonts.black,
       fontSize: 30,
-      letterSpacing: 10,
+      letterSpacing: 12,
       color: colors.textPrimary,
     },
     error: {

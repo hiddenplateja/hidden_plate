@@ -9,10 +9,21 @@
 //   - Review list filtered by the active tab
 //
 // Hamburger opens a side drawer with:
-//   Settings · Subscriptions · Help · Privacy · Terms · Log Out
+//   Settings · Help · Privacy · Terms · Log Out
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import {
+  CircleHelp,
+  FileText,
+  LogOut,
+  Medal,
+  Menu,
+  Settings,
+  ShieldCheck,
+  SquarePlus,
+  Store,
+  UserRoundSearch,
+} from "lucide-react-native";
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
@@ -76,7 +87,7 @@ export default function MyProfileScreen() {
 
   const menuItems: SideMenuItem[] = [
     {
-      icon: "plus-box-outline",
+      icon: SquarePlus,
       label: "Add a Restaurant",
       onPress: () => {
         setMenuOpen(false);
@@ -84,7 +95,7 @@ export default function MyProfileScreen() {
       },
     },
     {
-      icon: "storefront-outline",
+      icon: Store,
       label: "Your Restaurants",
       onPress: () => {
         setMenuOpen(false);
@@ -92,7 +103,7 @@ export default function MyProfileScreen() {
       },
     },
     {
-      icon: "medal-outline",
+      icon: Medal,
       label: "Reviewer Badges",
       onPress: () => {
         setMenuOpen(false);
@@ -100,7 +111,7 @@ export default function MyProfileScreen() {
       },
     },
     {
-      icon: "cog-outline",
+      icon: Settings,
       label: "Settings",
       onPress: () => {
         setMenuOpen(false);
@@ -108,15 +119,7 @@ export default function MyProfileScreen() {
       },
     },
     {
-      icon: "star-circle-outline",
-      label: "My Subscriptions",
-      onPress: () => {
-        setMenuOpen(false);
-        Alert.alert("My Subscriptions", "Subscription management coming soon!");
-      },
-    },
-    {
-      icon: "help-circle-outline",
+      icon: CircleHelp,
       label: "Help Center",
       onPress: () => {
         setMenuOpen(false);
@@ -131,7 +134,7 @@ export default function MyProfileScreen() {
       },
     },
     {
-      icon: "shield-check-outline",
+      icon: ShieldCheck,
       label: "Privacy Policy",
       onPress: () => {
         setMenuOpen(false);
@@ -139,7 +142,7 @@ export default function MyProfileScreen() {
       },
     },
     {
-      icon: "file-document-outline",
+      icon: FileText,
       label: "Terms & Policies",
       onPress: () => {
         setMenuOpen(false);
@@ -149,7 +152,7 @@ export default function MyProfileScreen() {
   ];
 
   const footerItem: SideMenuItem = {
-    icon: "logout",
+    icon: LogOut,
     label: "Log Out",
     danger: true,
     onPress: handleSignOut,
@@ -166,10 +169,10 @@ export default function MyProfileScreen() {
           accessibilityRole="button"
           accessibilityLabel="Find people"
         >
-          <MaterialCommunityIcons
-            name="account-search-outline"
-            size={22}
+          <UserRoundSearch
+            size={21}
             color={colors.textPrimary}
+            strokeWidth={2}
           />
         </Pressable>
 
@@ -180,11 +183,7 @@ export default function MyProfileScreen() {
           accessibilityRole="button"
           accessibilityLabel="Open menu"
         >
-          <MaterialCommunityIcons
-            name="menu"
-            size={22}
-            color={colors.textPrimary}
-          />
+          <Menu size={22} color={colors.textPrimary} strokeWidth={2} />
         </Pressable>
       </View>
 

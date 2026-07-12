@@ -1,7 +1,7 @@
 // app/admin/users.tsx
 // Admin: browse/search users, view profiles, ban/unban.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { CircleX, EllipsisVertical, Search } from "lucide-react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -130,11 +130,7 @@ export default function AdminUsers() {
       <AdminHeader title="Users" />
       <View style={styles.searchWrap}>
         <View style={styles.searchBar}>
-          <MaterialCommunityIcons
-            name="magnify"
-            size={18}
-            color={colors.textSecondary}
-          />
+          <Search size={17} color={colors.textSecondary} strokeWidth={2.2} />
           <TextInput
             style={styles.searchInput}
             value={query}
@@ -146,11 +142,7 @@ export default function AdminUsers() {
           />
           {query.length > 0 ? (
             <Pressable onPress={() => setQuery("")} hitSlop={8}>
-              <MaterialCommunityIcons
-                name="close-circle"
-                size={16}
-                color={colors.textMuted}
-              />
+              <CircleX size={16} color={colors.textMuted} strokeWidth={2} />
             </Pressable>
           ) : null}
         </View>
@@ -196,10 +188,10 @@ export default function AdminUsers() {
                 accessibilityRole="button"
                 accessibilityLabel="User options"
               >
-                <MaterialCommunityIcons
-                  name="dots-vertical"
-                  size={20}
+                <EllipsisVertical
+                  size={19}
                   color={colors.textMuted}
+                  strokeWidth={2}
                 />
               </Pressable>
             </Pressable>

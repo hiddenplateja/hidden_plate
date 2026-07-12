@@ -1,6 +1,6 @@
 // src/components/auth/StepDots.tsx
-// Minimal progress indicator for the signup wizard — `total` dots with the
-// current one elongated and coral.
+// Minimal progress indicator for the signup wizard — `total` segmented bars,
+// filled ink through the current step.
 
 import { StyleSheet, View } from "react-native";
 
@@ -23,10 +23,9 @@ export function StepDots({ total, index }: StepDotsProps) {
         <View
           key={i}
           style={[
-            styles.dot,
+            styles.bar,
             {
-              width: i === index ? 22 : 8,
-              backgroundColor: i === index ? colors.primary : colors.border,
+              backgroundColor: i <= index ? colors.primary : colors.border,
             },
           ]}
         />
@@ -37,5 +36,5 @@ export function StepDots({ total, index }: StepDotsProps) {
 
 const styles = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center", justifyContent: "center" },
-  dot: { height: 8, borderRadius: radius.pill, marginHorizontal: 3 },
+  bar: { width: 26, height: 4, borderRadius: radius.pill, marginHorizontal: 3 },
 });

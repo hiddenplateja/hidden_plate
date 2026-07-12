@@ -9,7 +9,17 @@
 // Self-contained: fetches the viewer's claim status on focus so returning from
 // the claim form reflects the pending state without the parent re-plumbing.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import {
+  BadgeCheck,
+  ChevronRight,
+  CircleCheck,
+  Clock,
+  ClockAlert,
+  EyeOff,
+  Megaphone,
+  Store,
+  type LucideIcon,
+} from "lucide-react-native";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -37,23 +47,23 @@ interface Props {
 
 // Compact listing-status label for the owner card.
 function listingLabel(state: ListingState): {
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: LucideIcon;
   text: string;
   tone: "ok" | "warn" | "bad";
 } | null {
   switch (state) {
     case "active":
     case "grandfathered":
-      return { icon: "check-circle-outline", text: "Listing active", tone: "ok" };
+      return { icon: CircleCheck, text: "Listing active", tone: "ok" };
     case "expiring":
       return {
-        icon: "clock-alert-outline",
+        icon: ClockAlert,
         text: "Listing expires soon — renew",
         tone: "warn",
       };
     case "lapsed":
       return {
-        icon: "eye-off-outline",
+        icon: EyeOff,
         text: "Listing hidden — renew now",
         tone: "bad",
       };
@@ -110,11 +120,7 @@ export function RestaurantOwnerCallout({
     return (
       <View style={styles.ownerCard}>
         <View style={styles.ownerCardRow}>
-          <MaterialCommunityIcons
-            name="check-decagram"
-            size={20}
-            color={colors.primary}
-          />
+          <BadgeCheck size={19} color={colors.primary} strokeWidth={2} />
           <View style={styles.textWrap}>
             <Text style={styles.title}>You manage this listing</Text>
             <Text style={styles.sub}>
@@ -133,19 +139,11 @@ export function RestaurantOwnerCallout({
             accessibilityRole="button"
             accessibilityLabel="Manage your listing"
           >
-            <MaterialCommunityIcons
-              name={listing.icon}
-              size={16}
-              color={listingTint}
-            />
+            <listing.icon size={15} color={listingTint} strokeWidth={2} />
             <Text style={[styles.listingText, { color: listingTint }]}>
               {listing.text}
             </Text>
-            <MaterialCommunityIcons
-              name="chevron-right"
-              size={18}
-              color={listingTint}
-            />
+            <ChevronRight size={17} color={listingTint} strokeWidth={2} />
           </Pressable>
         ) : null}
         {onPromote ? (
@@ -158,11 +156,7 @@ export function RestaurantOwnerCallout({
             accessibilityRole="button"
             accessibilityLabel="Promote this restaurant"
           >
-            <MaterialCommunityIcons
-              name="bullhorn-variant"
-              size={16}
-              color={colors.textInverse}
-            />
+            <Megaphone size={15} color={colors.onPrimary} strokeWidth={2} />
             <Text style={styles.promoteText}>Promote this restaurant</Text>
           </Pressable>
         ) : null}
@@ -173,11 +167,7 @@ export function RestaurantOwnerCallout({
   if (ownedByOther) {
     return (
       <View style={styles.badgeRow}>
-        <MaterialCommunityIcons
-          name="check-decagram"
-          size={15}
-          color={colors.primary}
-        />
+        <BadgeCheck size={14} color={colors.primary} strokeWidth={2} />
         <Text style={styles.badgeText}>Verified owner</Text>
       </View>
     );
@@ -187,11 +177,7 @@ export function RestaurantOwnerCallout({
     if (claimStatus === "pending") {
       return (
         <View style={[styles.card, styles.pendingCard]}>
-          <MaterialCommunityIcons
-            name="clock-outline"
-            size={20}
-            color={colors.textMuted}
-          />
+          <Clock size={19} color={colors.textMuted} strokeWidth={2} />
           <View style={styles.textWrap}>
             <Text style={styles.title}>Claim under review</Text>
             <Text style={styles.sub}>
@@ -208,19 +194,11 @@ export function RestaurantOwnerCallout({
         accessibilityRole="button"
         accessibilityLabel="Claim this business"
       >
-        <MaterialCommunityIcons
-          name="storefront-outline"
-          size={18}
-          color={colors.primary}
-        />
+        <Store size={17} color={colors.primary} strokeWidth={2} />
         <Text style={styles.claimText}>
           Own this business? <Text style={styles.claimTextBold}>Claim it</Text>
         </Text>
-        <MaterialCommunityIcons
-          name="chevron-right"
-          size={18}
-          color={colors.textMuted}
-        />
+        <ChevronRight size={17} color={colors.textMuted} strokeWidth={2} />
       </Pressable>
     );
   }
@@ -268,7 +246,7 @@ function makeStyles(c: ThemeColors) {
     promoteText: {
       fontFamily: fonts.bold,
       fontSize: T.size.sm,
-      color: colors.textInverse,
+      color: colors.onPrimary,
     },
     listingRow: {
       flexDirection: "row",

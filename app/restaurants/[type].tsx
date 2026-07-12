@@ -15,7 +15,7 @@
 // Search and category filters apply WITHIN the current "See all" category.
 // e.g., on /restaurants/featured + Jerk chip = featured jerk spots only.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { ArrowLeft, CircleX, Search, UtensilsCrossed } from "lucide-react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -297,10 +297,10 @@ export default function RestaurantListScreen() {
       {/* Search + chips */}
       <View style={styles.searchWrap}>
         <View style={styles.searchBar}>
-          <MaterialCommunityIcons
-            name="magnify"
-            size={20}
+          <Search
+            size={19}
             color={colors.textSecondary}
+            strokeWidth={2.2}
             style={{ marginRight: spacing.sm }}
           />
           <TextInput
@@ -313,11 +313,7 @@ export default function RestaurantListScreen() {
           />
           {searchQuery.length > 0 ? (
             <Pressable onPress={() => setSearchQuery("")} hitSlop={8}>
-              <MaterialCommunityIcons
-                name="close-circle"
-                size={18}
-                color={colors.textMuted}
-              />
+              <CircleX size={17} color={colors.textMuted} strokeWidth={2} />
             </Pressable>
           ) : null}
         </View>
@@ -347,15 +343,11 @@ export default function RestaurantListScreen() {
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <View style={styles.emptyIconWrap}>
-              <MaterialCommunityIcons
-                name={
-                  searchQuery || activeCategory !== "all"
-                    ? "magnify"
-                    : "silverware-clean"
-                }
-                size={32}
-                color={colors.primary}
-              />
+              {searchQuery || activeCategory !== "all" ? (
+                <Search size={30} color={colors.textPrimary} strokeWidth={1.8} />
+              ) : (
+                <UtensilsCrossed size={30} color={colors.textPrimary} strokeWidth={1.8} />
+              )}
             </View>
             <Text style={styles.emptyTitle}>
               {searchQuery || activeCategory !== "all"
@@ -417,11 +409,7 @@ function Header({
         accessibilityRole="button"
         accessibilityLabel="Go back"
       >
-        <MaterialCommunityIcons
-          name="arrow-left"
-          size={22}
-          color={colors.textPrimary}
-        />
+        <ArrowLeft size={20} color={colors.textPrimary} strokeWidth={2.2} />
       </Pressable>
       <View style={styles.headerText}>
         <Text style={styles.headerTitle} numberOfLines={1}>
@@ -542,7 +530,7 @@ function makeStyles(c: ThemeColors) {
   retryText: {
     fontFamily: fonts.bold,
     fontSize: T.size.base,
-    color: colors.textInverse,
+    color: colors.onPrimary,
   },
 
   listContent: {

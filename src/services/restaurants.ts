@@ -10,6 +10,7 @@ import {
   Role,
 } from "react-native-appwrite";
 
+import { PAID_FEATURES_ENABLED } from "@/constants/features";
 import { account, appwriteConfig, databases } from "@/services/appwrite";
 import { deleteImage } from "@/services/storage";
 import type {
@@ -237,8 +238,10 @@ export async function listRestaurants(
   // Hide CLAIMED restaurants whose paid listing window has lapsed. Unclaimed and
   // grandfathered listings have a null `listingPaidUntil` and stay visible — so
   // this never affects community submissions. Skipped automatically if the
-  // optional `listingPaidUntil` attribute hasn't been added to the schema yet.
-  if (listingFilterSupported) {
+  // optional `listingPaidUntil` attribute hasn't been added to the schema yet,
+  // and entirely while paid features are off (nothing to renew, so claimed
+  // restaurants must never disappear — see constants/features.ts).
+  if (PAID_FEATURES_ENABLED && listingFilterSupported) {
     queries.push(
       Query.or([
         Query.isNull("listingPaidUntil"),
@@ -346,7 +349,7 @@ export async function searchRestaurants(term: string): Promise<Restaurant[]> {
       Query.orderDesc("averageRating"),
       Query.limit(SEARCH_LIMIT),
     ];
-    if (listingFilterSupported) {
+    if (PAID_FEATURES_ENABLED && listingFilterSupported) {
       queries.push(
         Query.or([
           Query.isNull("listingPaidUntil"),
@@ -574,27 +577,12 @@ function buildSearchText(args: {
     .trim();
 }
 
-/**
- * Create a user-submitted restaurant.
- *
- * Moderation: new listings are created with `isActive: false`, so they're
- * hidden from the app (every list query filters on `isActive === true`) until
- * an admin flips the flag in the Appwrite console. There's no spare Function
- * on the free tier to enforce this server-side, so it's an honest-client
- * default — but the app's own UI never sets it true.
- *
- * Requires: the "restaurants" collection must grant CREATE to the "Users"
- * role in the Appwrite console. Without it, this throws a permissions error.
- */
-export async function createRestaurant(
-  input: CreateRestaurantInput,
-): Promise<Restaurant> {
-  const name = input.name.trim();
-  if (name.length < 2) {
+// Validate a create payload. Throws RestaurantError with a friendly message.
+function validateCreateInput(input: CreateRestaurantInput): void {
+  if (input.name.trim().length < 2) {
     throw new RestaurantError("Please enter the restaurant's name.");
   }
-  const address = input.address.trim();
-  if (!address) {
+  if (!input.address.trim()) {
     throw new RestaurantError("Please enter the address.");
   }
   if (!input.parish) {
@@ -607,35 +595,34 @@ export async function createRestaurant(
   ) {
     throw new RestaurantError("Please set the location on the map.");
   }
-  const cuisines = normalizeTags(input.cuisines);
-  const categories = normalizeTags(input.categories);
-  if (cuisines.length === 0 && categories.length === 0) {
+  if (
+    normalizeTags(input.cuisines).length === 0 &&
+    normalizeTags(input.categories).length === 0
+  ) {
     throw new RestaurantError("Please pick at least one cuisine or category.");
   }
+}
 
-  let me: { $id: string };
-  try {
-    me = await account.get();
-  } catch {
-    throw new RestaurantError("You must be signed in to add a restaurant.");
-  }
-
+// Build the shared, non-trust restaurant fields from a create payload. The
+// trust fields (isActive/isVerified/isFeatured/ownerId/averageRating/
+// reviewCount/addedBy) are intentionally NOT set here — the caller (worker or
+// admin path) decides those.
+function buildRestaurantFields(
+  input: CreateRestaurantInput,
+  opts: { withSearchText: boolean },
+): Record<string, unknown> {
+  const name = input.name.trim();
   const city = input.city?.trim() || null;
-  const description = input.description?.trim() || null;
+  const cuisines = normalizeTags(input.cuisines);
+  const categories = normalizeTags(input.categories);
   const imageIds = input.imageIds ?? [];
-  const searchTerms = buildSearchTerms({
-    name,
-    cuisines,
-    categories,
-    parish: input.parish,
-    city,
-  });
+  const searchArgs = { name, cuisines, categories, parish: input.parish, city };
 
   const data: Record<string, unknown> = {
     name,
     slug: `${slugify(name)}-${randomSuffix()}`,
-    description,
-    address,
+    description: input.description?.trim() || null,
+    address: input.address.trim(),
     parish: input.parish,
     city,
     latitude: input.latitude,
@@ -651,72 +638,168 @@ export async function createRestaurant(
     openingHours: input.openingHours
       ? JSON.stringify(input.openingHours)
       : null,
-    averageRating: 0,
-    reviewCount: 0,
-    // Default to pending/unflagged for public submissions; admins may
-    // publish + flag directly by passing these.
-    isVerified: input.isVerified ?? false,
-    isFeatured: input.isFeatured ?? false,
-    isActive: input.isActive ?? false,
-    addedBy: me.$id,
-    searchTerms,
+    searchTerms: buildSearchTerms(searchArgs),
   };
-  // Server-search haystack — optional attribute; dropped (with the session
-  // flag cleared) if the schema doesn't have it, so submission never breaks.
-  if (searchTextSupported) {
-    data.searchText = buildSearchText({
-      name,
-      cuisines,
-      categories,
-      parish: input.parish,
-      city,
+  if (opts.withSearchText) data.searchText = buildSearchText(searchArgs);
+  const menuJson = serializeMenu(input.menu);
+  if (menuJson) data.menu = menuJson;
+  return data;
+}
+
+// The Cloudflare Worker's restaurant-submit endpoint (same origin as the OTP
+// worker). Null when the worker isn't configured, in which case createRestaurant
+// falls back to a direct client write.
+function restaurantSubmitUrl(): string | null {
+  const base = process.env.EXPO_PUBLIC_EMAIL_OTP_URL;
+  if (!base) return null;
+  try {
+    return `${new URL(base).origin}/restaurant/submit`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Create a user-submitted restaurant.
+ *
+ * Moderation + trust: submissions must land pending (isActive:false) and can't
+ * be self-verified/featured/owned. That's enforced SERVER-SIDE by the Cloudflare
+ * Worker (`POST /restaurant/submit`), which force-sets every trust field with
+ * the Appwrite admin key. For that enforcement to hold, the `restaurants`
+ * collection must NOT grant Create to the Users role (only the admins team +
+ * the worker's API key) — see APPWRITE_SETUP.md.
+ *
+ * Fallback: when the worker isn't configured (EXPO_PUBLIC_EMAIL_OTP_URL unset),
+ * this writes directly from the client with the trust fields forced off. That
+ * path is honest-client only (a tampered client could override them), so ship
+ * the worker + drop the Users Create grant to actually close it.
+ */
+export async function createRestaurant(
+  input: CreateRestaurantInput,
+): Promise<Restaurant> {
+  validateCreateInput(input);
+
+  let me: { $id: string };
+  try {
+    me = await account.get();
+  } catch {
+    throw new RestaurantError("You must be signed in to add a restaurant.");
+  }
+
+  const submitUrl = restaurantSubmitUrl();
+  if (!submitUrl) {
+    return clientCreateRestaurant(input, me.$id, {
+      isActive: false,
+      isVerified: false,
+      isFeatured: false,
     });
   }
 
-  // Menu is optional and only included when there are items, so creating a
-  // restaurant still works if the `menu` attribute hasn't been added to the
-  // collection yet.
-  const menuJson = serializeMenu(input.menu);
-  if (menuJson) data.menu = menuJson;
+  let jwt: string;
+  try {
+    jwt = (await account.createJWT()).jwt;
+  } catch {
+    throw new RestaurantError("Your session expired. Please sign in again.");
+  }
 
+  const submit = async (withSearchText: boolean): Promise<Restaurant> => {
+    const data = buildRestaurantFields(input, { withSearchText });
+    let res: Response;
+    try {
+      res = await fetch(submitUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jwt, data }),
+      });
+    } catch {
+      throw new RestaurantError("Check your connection and try again.");
+    }
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as {
+        message?: string;
+      } | null;
+      const message = body?.message ?? "Couldn't submit this restaurant.";
+      // Schema lacks the optional searchText attribute — drop it and retry.
+      if (withSearchText && /searchText/i.test(message)) {
+        searchTextSupported = false;
+        return submit(false);
+      }
+      throw new RestaurantError(message);
+    }
+    const payload = (await res.json()) as { document?: RestaurantDoc };
+    if (!payload.document) {
+      throw new RestaurantError("Couldn't submit this restaurant.");
+    }
+    return mapDoc(payload.document);
+  };
+
+  return submit(searchTextSupported);
+}
+
+// Direct client-side create. Used by the admin publish path (which honors the
+// passed flags, backed by the admins-team Create grant) and by the worker-less
+// fallback for user submissions (trust fields forced off).
+async function clientCreateRestaurant(
+  input: CreateRestaurantInput,
+  addedBy: string,
+  flags: { isActive: boolean; isVerified: boolean; isFeatured: boolean },
+): Promise<Restaurant> {
   const permissions = [
-    // A client can only grant permissions for roles it holds, so set just
-    // the submitter's (all signed-in users can read once approved; the
-    // submitter can withdraw their pending submission). Admin edit/delete
-    // comes from the admins-team grants at the COLLECTION level, applied
-    // alongside these when Document Security is on.
     Permission.read(Role.users()),
-    Permission.delete(Role.user(me.$id)),
+    Permission.delete(Role.user(addedBy)),
   ];
 
-  try {
-    const doc = await databases.createDocument(
-      appwriteConfig.databaseId,
-      appwriteConfig.collections.restaurants,
-      ID.unique(),
-      data,
-      permissions,
-    );
-    return mapDoc(doc as unknown as RestaurantDoc);
-  } catch (err) {
-    if (searchTextSupported && isMissingSearchText(err)) {
-      searchTextSupported = false;
-      delete data.searchText;
-      try {
-        const doc = await databases.createDocument(
-          appwriteConfig.databaseId,
-          appwriteConfig.collections.restaurants,
-          ID.unique(),
-          data,
-          permissions,
-        );
-        return mapDoc(doc as unknown as RestaurantDoc);
-      } catch (retryErr) {
-        throw toRestaurantError(retryErr, "Couldn't submit this restaurant.");
+  const create = async (withSearchText: boolean): Promise<Restaurant> => {
+    const data = {
+      ...buildRestaurantFields(input, { withSearchText }),
+      averageRating: 0,
+      reviewCount: 0,
+      isVerified: flags.isVerified,
+      isFeatured: flags.isFeatured,
+      isActive: flags.isActive,
+      addedBy,
+    };
+    try {
+      const doc = await databases.createDocument(
+        appwriteConfig.databaseId,
+        appwriteConfig.collections.restaurants,
+        ID.unique(),
+        data,
+        permissions,
+      );
+      return mapDoc(doc as unknown as RestaurantDoc);
+    } catch (err) {
+      if (withSearchText && isMissingSearchText(err)) {
+        searchTextSupported = false;
+        return create(false);
       }
+      throw toRestaurantError(err, "Couldn't submit this restaurant.");
     }
-    throw toRestaurantError(err, "Couldn't submit this restaurant.");
+  };
+
+  return create(searchTextSupported);
+}
+
+/**
+ * Admin: create a restaurant directly (honoring active/verified/featured flags).
+ * Client-side write, authorized by the admins-team Create grant on the
+ * collection — admins are trusted, so no worker gatekeeper is needed here.
+ */
+export async function adminCreateRestaurant(
+  input: CreateRestaurantInput,
+): Promise<Restaurant> {
+  validateCreateInput(input);
+  let me: { $id: string };
+  try {
+    me = await account.get();
+  } catch {
+    throw new RestaurantError("You must be signed in to add a restaurant.");
   }
+  return clientCreateRestaurant(input, me.$id, {
+    isActive: input.isActive ?? false,
+    isVerified: input.isVerified ?? false,
+    isFeatured: input.isFeatured ?? false,
+  });
 }
 
 // ---------- Admin operations ----------

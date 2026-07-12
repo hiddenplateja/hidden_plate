@@ -2,7 +2,7 @@
 // Admin: reported reviews, grouped by review. Delete the review, or dismiss
 // the report(s) if the content is fine.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Flag, FlagOff } from "lucide-react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import {
@@ -163,11 +163,7 @@ export default function AdminReports() {
               <View style={styles.card}>
                 <View style={styles.cardHeader}>
                   <View style={styles.countPill}>
-                    <MaterialCommunityIcons
-                      name="flag"
-                      size={12}
-                      color={colors.error}
-                    />
+                    <Flag size={12} color={colors.error} strokeWidth={2} />
                     <Text style={styles.countText}>
                       {item.reports.length}{" "}
                       {item.reports.length === 1 ? "report" : "reports"}
@@ -252,11 +248,7 @@ export default function AdminReports() {
           ListEmptyComponent={
             <View style={styles.center}>
               <View style={styles.emptyIconWrap}>
-                <MaterialCommunityIcons
-                  name="flag-checkered"
-                  size={32}
-                  color={colors.primary}
-                />
+                <FlagOff size={30} color={colors.primary} strokeWidth={1.8} />
               </View>
               <Text style={styles.emptyTitle}>No reports</Text>
               <Text style={styles.emptyBody}>

@@ -3,7 +3,13 @@
 // (Bug / Suggestion / Other), describe the issue, and submit. Device + app
 // info is captured automatically by the service, so the user doesn't type it.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import {
+  ArrowLeft,
+  Bug,
+  Ellipsis,
+  Lightbulb,
+  type LucideIcon,
+} from "lucide-react-native";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
@@ -19,10 +25,10 @@ import { fonts, radius, spacing, typographyTokens as T } from "@/theme/colors";
 import type { ThemeColors } from "@/theme/themes";
 import { useThemedStyles } from "@/theme/useThemedStyles";
 
-const TYPES: { value: BugReportType; label: string; icon: keyof typeof MaterialCommunityIcons.glyphMap }[] = [
-  { value: "bug", label: "Bug", icon: "bug-outline" },
-  { value: "suggestion", label: "Suggestion", icon: "lightbulb-outline" },
-  { value: "other", label: "Other", icon: "dots-horizontal" },
+const TYPES: { value: BugReportType; label: string; icon: LucideIcon }[] = [
+  { value: "bug", label: "Bug", icon: Bug },
+  { value: "suggestion", label: "Suggestion", icon: Lightbulb },
+  { value: "other", label: "Other", icon: Ellipsis },
 ];
 
 export default function ReportBugScreen() {
@@ -67,11 +73,7 @@ export default function ReportBugScreen() {
             accessibilityRole="button"
             accessibilityLabel="Go back"
           >
-            <MaterialCommunityIcons
-              name="arrow-left"
-              size={22}
-              color={colors.textPrimary}
-            />
+            <ArrowLeft size={20} color={colors.textPrimary} strokeWidth={2.2} />
           </Pressable>
           <Text style={styles.headerTitle}>Report a bug</Text>
           <View style={{ width: 36 }} />
@@ -100,9 +102,9 @@ export default function ReportBugScreen() {
                   accessibilityRole="button"
                   accessibilityState={{ selected: active }}
                 >
-                  <MaterialCommunityIcons
-                    name={t.icon}
-                    size={16}
+                  <t.icon
+                    size={15}
+                    strokeWidth={2}
                     color={active ? colors.primary : colors.textMuted}
                   />
                   <Text

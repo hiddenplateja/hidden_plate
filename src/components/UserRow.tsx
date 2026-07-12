@@ -84,7 +84,7 @@ export function UserRow({
           {busy ? (
             <ActivityIndicator
               size="small"
-              color={isFollowing ? colors.primary : colors.textInverse}
+              color={isFollowing ? colors.primary : colors.onPrimary}
             />
           ) : (
             <Text
@@ -151,7 +151,7 @@ function makeStyles(c: ThemeColors) {
   followBtnText: {
     fontFamily: fonts.bold,
     fontSize: T.size.xs,
-    color: colors.textInverse,
+    color: colors.onPrimary,
   },
   followingBtn: {
     paddingHorizontal: spacing.md,

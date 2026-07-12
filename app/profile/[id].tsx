@@ -4,7 +4,7 @@
 // Uses the shared <ProfileView> with isOwn auto-detected from the current user.
 // Shows a Back button in a header bar since this isn't a tab.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { ArrowLeft } from "lucide-react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -42,20 +42,26 @@ export default function UserProfileScreen() {
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >
-          <MaterialCommunityIcons
-            name="arrow-left"
-            size={22}
-            color={colors.textPrimary}
-          />
+          <ArrowLeft size={20} color={colors.textPrimary} strokeWidth={2.2} />
         </Pressable>
-        <Text style={styles.headerTitle}>Profile</Text>
-        <View style={{ width: 36 }} />
       </View>
 
       <ProfileView
         userId={id}
         isOwn={isOwn}
         onEditPress={isOwn ? () => router.push("/edit-profile") : undefined}
+        onFollowersPress={() =>
+          router.push({
+            pathname: "/follows/[type]",
+            params: { type: "followers", userId: id },
+          })
+        }
+        onFollowingPress={() =>
+          router.push({
+            pathname: "/follows/[type]",
+            params: { type: "following", userId: id },
+          })
+        }
       />
     </SafeAreaView>
   );
@@ -80,11 +86,6 @@ function makeStyles(c: ThemeColors) {
     height: 36,
     alignItems: "center",
     justifyContent: "center",
-  },
-  headerTitle: {
-    fontFamily: fonts.bold,
-    fontSize: T.size.lg,
-    color: colors.textPrimary,
   },
   errorContainer: {
     flex: 1,

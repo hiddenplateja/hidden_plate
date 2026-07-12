@@ -5,8 +5,13 @@
 // Smaller and denser than the home feed cards — optimized for retrieval
 // rather than discovery.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
+import {
+  ChevronRight,
+  CircleAlert,
+  Star,
+  UtensilsCrossed,
+} from "lucide-react-native";
 import { memo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
@@ -54,11 +59,7 @@ function SavedRestaurantRowImpl({
     return (
       <View style={[styles.row, styles.rowUnavailable]}>
         <View style={[styles.thumb, styles.thumbPlaceholder]}>
-          <MaterialCommunityIcons
-            name="alert-circle-outline"
-            size={20}
-            color={colors.textMuted}
-          />
+          <CircleAlert size={19} color={colors.textMuted} strokeWidth={1.8} />
         </View>
         <View style={styles.info}>
           <Text style={styles.unavailableTitle}>Currently unavailable</Text>
@@ -94,11 +95,7 @@ function SavedRestaurantRowImpl({
           />
         ) : (
           <View style={[styles.thumb, styles.thumbPlaceholder]}>
-            <MaterialCommunityIcons
-              name="silverware-fork-knife"
-              size={22}
-              color={colors.border}
-            />
+            <UtensilsCrossed size={20} color={colors.border} strokeWidth={1.8} />
           </View>
         )}
       </View>
@@ -112,7 +109,7 @@ function SavedRestaurantRowImpl({
         </Text>
         {restaurant.reviewCount > 0 ? (
           <View style={styles.metaRow}>
-            <MaterialCommunityIcons name="star" size={12} color={colors.star} />
+            <Star size={12} color={colors.star} fill={colors.star} />
             <Text style={styles.metaText}>
               {restaurant.averageRating.toFixed(1)}
             </Text>
@@ -123,11 +120,7 @@ function SavedRestaurantRowImpl({
         )}
       </View>
 
-      <MaterialCommunityIcons
-        name="chevron-right"
-        size={20}
-        color={colors.textMuted}
-      />
+      <ChevronRight size={18} color={colors.textMuted} strokeWidth={2} />
     </Pressable>
   );
 }

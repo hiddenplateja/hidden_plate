@@ -209,6 +209,28 @@ export default async ({ req, res, log, error }) => {
     });
   }
 
+  // ── Review edit ─────────────────────────────────────────────────────────
+  // The reviews collection grants its author NO direct update permission
+  // (Appwrite document perms are all-or-nothing, so a direct grant would also
+  // let a modified client flip isHidden or inflate likeCount/commentCount).
+  // Authors edit their review's content through here instead: we verify
+  // ownership from the injected auth header and write ONLY whitelisted content
+  // fields — never moderation or counter state. Requires a signed-in caller.
+  if (payload.editReview === true) {
+    const editCaller = req.headers["x-appwrite-user-id"];
+    if (!editCaller) {
+      error("Review edit from anonymous caller — refusing");
+      return res.json({ success: false, error: "Must be signed in" }, 401);
+    }
+    return handleReviewEdit(payload, databases, editCaller, {
+      DATABASE_ID,
+      REVIEWS_COLLECTION_ID,
+      res,
+      log,
+      error,
+    });
+  }
+
   // ── Push-token management ───────────────────────────────────────────────
   // Register / clear this device's Expo push token. The token is ALWAYS bound
   // to the authenticated caller (x-appwrite-user-id) — a client-supplied
@@ -871,6 +893,129 @@ async function handleModeration(payload, databases, ctx) {
       },
       500,
     );
+  }
+}
+
+// ─── Review edit handler ─────────────────────────────────────────────────────
+// Owner-only edit of a review's user-authored content. The reviews collection
+// grants the author no direct update permission, so this is the single path an
+// author has to change their own review. We:
+//   1. Verify the caller owns the review (userId matches the auth header).
+//   2. Write ONLY whitelisted content fields (rating / comment / imageIds) plus
+//      isEdited. isHidden, likeCount, commentCount, userId, restaurantId can
+//      never be set from the payload — that's what makes un-hiding and counter
+//      inflation impossible even from a modified client.
+// Validation mirrors validateReviewInput on the client (rating range, comment
+// length, link rejection, image count) so the server is the real boundary.
+async function handleReviewEdit(payload, databases, callerUserId, ctx) {
+  const { DATABASE_ID, REVIEWS_COLLECTION_ID, res, log, error } = ctx;
+
+  const { reviewId, rating, comment, imageIds } = payload;
+
+  if (!reviewId) {
+    return res.json({ success: false, error: "reviewId required" }, 400);
+  }
+  if (!REVIEWS_COLLECTION_ID) {
+    return res.json(
+      {
+        success: false,
+        error: "Review edit requires REVIEWS_COLLECTION_ID env var",
+      },
+      500,
+    );
+  }
+
+  // Ownership proof — load the review and confirm the caller authored it.
+  let review;
+  try {
+    review = await databases.getDocument(
+      DATABASE_ID,
+      REVIEWS_COLLECTION_ID,
+      reviewId,
+    );
+  } catch (err) {
+    error(`Review edit: could not load review ${reviewId}: ${err.message}`);
+    return res.json({ success: false, error: "Review not found" }, 404);
+  }
+  if (review.userId !== callerUserId) {
+    error(
+      `Review edit rejected: caller ${callerUserId} does not own review ${reviewId}`,
+    );
+    return res.json({ success: false, error: "Not your review" }, 403);
+  }
+
+  // Whitelisted update. Start with isEdited; add fields only after validating.
+  const updates = { isEdited: true };
+
+  if (rating !== undefined) {
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      return res.json(
+        {
+          success: false,
+          error: "Rating must be a whole number from 1 to 5.",
+        },
+        400,
+      );
+    }
+    updates.rating = rating;
+  }
+
+  if (comment !== undefined) {
+    if (comment !== null) {
+      if (typeof comment !== "string" || comment.length > 2000) {
+        return res.json(
+          {
+            success: false,
+            error: "Comment must be 2000 characters or less.",
+          },
+          400,
+        );
+      }
+      if (containsUrl(comment)) {
+        return res.json(
+          {
+            success: false,
+            error: "Links aren't allowed. Please remove any URLs from your text.",
+          },
+          400,
+        );
+      }
+    }
+    updates.comment = comment;
+  }
+
+  if (imageIds !== undefined) {
+    if (!Array.isArray(imageIds) || imageIds.length > 6) {
+      return res.json(
+        { success: false, error: "Up to 6 images per review." },
+        400,
+      );
+    }
+    updates.imageIds = imageIds;
+  }
+
+  try {
+    // Re-assert the hardened permission set on every edit: read for all users,
+    // delete for the author, and crucially NO update grant. This self-heals any
+    // review created before authors lost direct update permission (those docs
+    // still carry a stale Permission.update grant that would otherwise let the
+    // author bypass this Function).
+    const permissions = [
+      Permission.read(Role.users()),
+      Permission.delete(Role.user(callerUserId)),
+    ];
+    const updated = await databases.updateDocument(
+      DATABASE_ID,
+      REVIEWS_COLLECTION_ID,
+      reviewId,
+      updates,
+      permissions,
+    );
+    log(`Review ${reviewId} edited by owner ${callerUserId}`);
+    return res.json({ success: true, review: updated });
+  } catch (err) {
+    error(`Review edit write failed for ${reviewId}: ${err.message}`);
+    return res.json({ success: false, error: "Could not update review" }, 500);
   }
 }
 

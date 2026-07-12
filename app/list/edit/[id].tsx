@@ -1,7 +1,7 @@
 // app/list/edit/[id].tsx
 // Edit a Collection's name / description / visibility.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { ArrowLeft } from "lucide-react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
@@ -68,11 +68,7 @@ export default function EditListScreen() {
             hitSlop={10}
             style={styles.backBtn}
           >
-            <MaterialCommunityIcons
-              name="arrow-left"
-              size={24}
-              color={colors.textPrimary}
-            />
+            <ArrowLeft size={22} color={colors.textPrimary} strokeWidth={2.2} />
           </Pressable>
           <Text style={styles.topTitle}>Edit collection</Text>
           <View style={styles.backBtn} />

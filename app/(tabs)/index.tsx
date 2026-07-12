@@ -29,7 +29,20 @@
 //   - Refresh failures when items are already on screen → silent (Sentry
 //     captures); the stale list stays visible, user can pull down again.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import {
+  ArrowRight,
+  ChevronRight,
+  CircleX,
+  CloudOff,
+  Compass,
+  Gem,
+  MapPin,
+  MapPinOff,
+  Search,
+  SlidersHorizontal,
+  Star,
+  UtensilsCrossed,
+} from "lucide-react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Location from "expo-location";
@@ -183,11 +196,7 @@ const FeaturedCard = memo(function FeaturedCard({
         />
       ) : (
         <View style={[StyleSheet.absoluteFill, featuredStyles.placeholder]}>
-          <MaterialCommunityIcons
-            name="silverware-fork-knife"
-            size={32}
-            color={colors.border}
-          />
+          <UtensilsCrossed size={30} color={colors.border} strokeWidth={1.8} />
         </View>
       )}
 
@@ -211,11 +220,7 @@ const FeaturedCard = memo(function FeaturedCard({
 
         {item.reviewCount > 0 ? (
           <View style={featuredStyles.ratingRow}>
-            <MaterialCommunityIcons
-              name="star"
-              size={13}
-              color={colors.star}
-            />
+            <Star size={12} color={colors.star} fill={colors.star} />
             <Text style={featuredStyles.ratingValue}>
               {item.averageRating.toFixed(1)}
             </Text>
@@ -256,11 +261,7 @@ function SeeAllButton({ onPress }: { onPress: () => void }) {
       accessibilityLabel="See all"
     >
       <Text style={screenStyles.seeAllText}>See all</Text>
-      <MaterialCommunityIcons
-        name="chevron-right"
-        size={16}
-        color={colors.primary}
-      />
+      <ChevronRight size={15} color={colors.primary} strokeWidth={2.2} />
     </Pressable>
   );
 }
@@ -709,11 +710,7 @@ export default function HomeFeedScreen() {
                 <Text style={screenStyles.sectionTitle}>Near You</Text>
                 {userLocation ? (
                   <View style={screenStyles.locationPill}>
-                    <MaterialCommunityIcons
-                      name="map-marker"
-                      size={10}
-                      color={colors.primary}
-                    />
+                    <MapPin size={10} color={colors.accent} strokeWidth={2.4} />
                     <Text style={screenStyles.locationPillText}>Live</Text>
                   </View>
                 ) : null}
@@ -737,11 +734,7 @@ export default function HomeFeedScreen() {
                 style={screenStyles.locationDenied}
                 onPress={requestLocation}
               >
-                <MaterialCommunityIcons
-                  name="map-marker-off"
-                  size={20}
-                  color={colors.textMuted}
-                />
+                <MapPinOff size={19} color={colors.textMuted} strokeWidth={2} />
                 <Text style={screenStyles.locationDeniedText}>
                   Location access needed
                 </Text>
@@ -755,11 +748,7 @@ export default function HomeFeedScreen() {
             !locationError &&
             nearbyRestaurants.length === 0 ? (
               <View style={screenStyles.locationDenied}>
-                <MaterialCommunityIcons
-                  name="map-search"
-                  size={20}
-                  color={colors.textMuted}
-                />
+                <Compass size={19} color={colors.textMuted} strokeWidth={2} />
                 <Text style={screenStyles.locationDeniedText}>
                   No spots within 20km
                 </Text>
@@ -820,11 +809,7 @@ export default function HomeFeedScreen() {
             <View style={screenStyles.sectionRow}>
               <View style={screenStyles.sectionTitleRow}>
                 <Text style={screenStyles.sectionTitle}>Hidden Gems</Text>
-                <MaterialCommunityIcons
-                  name="diamond-stone"
-                  size={16}
-                  color={colors.primary}
-                />
+                <Gem size={15} color={colors.accent} strokeWidth={2.2} />
               </View>
             </View>
             <FlatList
@@ -901,7 +886,7 @@ export default function HomeFeedScreen() {
       <SafeAreaView style={screenStyles.container} edges={["top"]}>
         <ErrorState
           variant="screen"
-          icon="cloud-off-outline"
+          icon={CloudOff}
           title="Couldn't load Hidden Plate"
           body="Check your connection and try again."
           onRetry={handleRetry}
@@ -930,10 +915,10 @@ export default function HomeFeedScreen() {
 
         <View style={screenStyles.searchRow}>
           <View style={screenStyles.searchBar}>
-            <MaterialCommunityIcons
-              name="magnify"
-              size={20}
+            <Search
+              size={19}
               color={colors.textSecondary}
+              strokeWidth={2.2}
               style={{ marginRight: spacing.sm }}
             />
             <TextInput
@@ -946,11 +931,7 @@ export default function HomeFeedScreen() {
             />
             {searchQuery.length > 0 ? (
               <Pressable onPress={() => setSearchQuery("")} hitSlop={8}>
-                <MaterialCommunityIcons
-                  name="close-circle"
-                  size={18}
-                  color={colors.textMuted}
-                />
+                <CircleX size={17} color={colors.textMuted} strokeWidth={2} />
               </Pressable>
             ) : null}
           </View>
@@ -968,12 +949,10 @@ export default function HomeFeedScreen() {
                 : "Filters"
             }
           >
-            <MaterialCommunityIcons
-              name="tune-variant"
-              size={22}
-              color={
-                activeFilterCount > 0 ? colors.primary : colors.textSecondary
-              }
+            <SlidersHorizontal
+              size={20}
+              color={colors.white}
+              strokeWidth={2.2}
             />
             {activeFilterCount > 0 ? (
               <View style={screenStyles.filterBadge}>
@@ -1025,11 +1004,7 @@ export default function HomeFeedScreen() {
               <Text style={screenStyles.viewAllText}>
                 View all {filteredRestaurants.length} places
               </Text>
-              <MaterialCommunityIcons
-                name="arrow-right"
-                size={18}
-                color={colors.primary}
-              />
+              <ArrowRight size={17} color={colors.primary} strokeWidth={2.2} />
             </Pressable>
           ) : (
             <View style={{ height: spacing.xl }} />
@@ -1041,10 +1016,10 @@ export default function HomeFeedScreen() {
             style={screenStyles.emptyContainer}
           >
             <View style={screenStyles.emptyIconWrap}>
-              <MaterialCommunityIcons
-                name="silverware-fork-knife"
-                size={32}
-                color={colors.primary}
+              <UtensilsCrossed
+                size={30}
+                color={colors.textPrimary}
+                strokeWidth={1.8}
               />
             </View>
             <Text style={screenStyles.emptyTitle}>No spots found</Text>
@@ -1148,15 +1123,14 @@ function makeScreenStyles(c: ThemeColors) {
     borderRadius: radius.full,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.cardBackground,
-    borderWidth: 1,
-    borderColor: colors.divider,
+    backgroundColor: colors.accent,
     ...shadows.sm,
   },
   filterBtnActive: {
-    backgroundColor: colors.primaryLight,
-    borderColor: colors.primary,
+    backgroundColor: colors.accentDark,
   },
+  // Count bubble sits on the red button, so it's a white pill with the red
+  // number for contrast (rather than red-on-red).
   filterBadge: {
     position: "absolute",
     top: -6,
@@ -1164,7 +1138,7 @@ function makeScreenStyles(c: ThemeColors) {
     minWidth: 18,
     height: 18,
     borderRadius: 9,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.white,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 4,
@@ -1174,7 +1148,7 @@ function makeScreenStyles(c: ThemeColors) {
   filterBadgeText: {
     fontFamily: fonts.bold,
     fontSize: 10,
-    color: colors.textInverse,
+    color: colors.accent,
     lineHeight: 12,
   },
 
@@ -1262,7 +1236,7 @@ function makeScreenStyles(c: ThemeColors) {
   locationPillText: {
     fontFamily: fonts.bold,
     fontSize: T.size.xs,
-    color: colors.primary,
+    color: colors.accent,
   },
   locationDenied: {
     alignItems: "center",
@@ -1282,7 +1256,7 @@ function makeScreenStyles(c: ThemeColors) {
   },
 
   newBadge: {
-    backgroundColor: colors.primary,
+    backgroundColor: colors.accent,
     borderRadius: radius.xs,
     paddingHorizontal: spacing.sm,
     paddingVertical: 3,
@@ -1290,7 +1264,7 @@ function makeScreenStyles(c: ThemeColors) {
   newBadgeText: {
     fontFamily: fonts.bold,
     fontSize: T.size.xs,
-    color: colors.textInverse,
+    color: colors.white,
     letterSpacing: T.tracking.wider,
   },
 
@@ -1375,7 +1349,7 @@ function makeFeaturedStyles(c: ThemeColors) {
     position: "absolute",
     top: spacing.md,
     left: spacing.md,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.accent,
     borderRadius: radius.xs,
     paddingHorizontal: spacing.sm,
     paddingVertical: 3,
@@ -1383,7 +1357,7 @@ function makeFeaturedStyles(c: ThemeColors) {
   cuisineBadgeText: {
     fontFamily: fonts.bold,
     fontSize: T.size.xs,
-    color: colors.textInverse,
+    color: colors.white,
     letterSpacing: T.tracking.wider,
   },
   content: {

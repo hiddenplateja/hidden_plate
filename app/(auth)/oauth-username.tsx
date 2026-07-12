@@ -4,8 +4,8 @@
 // then create the profile via completeOAuthSignup. Cancelling signs out so the
 // user isn't left with a session and no profile.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { UserRoundCheck, X } from "lucide-react-native";
 import { useRef, useState } from "react";
 import {
   Alert,
@@ -109,12 +109,8 @@ export default function OAuthUsernameScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
       <View style={styles.topBar}>
-        <Pressable onPress={handleCancel} hitSlop={10} style={styles.iconBtn}>
-          <MaterialCommunityIcons
-            name="close"
-            size={24}
-            color={colors.textPrimary}
-          />
+        <Pressable onPress={handleCancel} hitSlop={10} style={styles.backBtn}>
+          <X size={21} color={colors.textPrimary} strokeWidth={2.2} />
         </Pressable>
         <View style={styles.iconBtn} />
       </View>
@@ -127,10 +123,10 @@ export default function OAuthUsernameScreen() {
         bottomOffset={24}
       >
         <View style={styles.iconWrap}>
-          <MaterialCommunityIcons
-            name="account-check-outline"
-            size={34}
-            color={colors.primary}
+          <UserRoundCheck
+            size={30}
+            color={colors.textPrimary}
+            strokeWidth={1.8}
           />
         </View>
 
@@ -211,9 +207,17 @@ function makeStyles(c: ThemeColors) {
       alignItems: "center",
       justifyContent: "center",
     },
+    backBtn: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: colors.surface,
+      alignItems: "center",
+      justifyContent: "center",
+    },
     scroll: {
       flexGrow: 1,
-      paddingHorizontal: spacing.xl,
+      paddingHorizontal: spacing.lg,
       paddingTop: spacing.md,
       paddingBottom: spacing.xl,
     },
@@ -221,16 +225,17 @@ function makeStyles(c: ThemeColors) {
       width: 72,
       height: 72,
       borderRadius: radius.pill,
-      backgroundColor: colors.primaryLight,
+      backgroundColor: colors.surface,
       alignItems: "center",
       justifyContent: "center",
       marginBottom: spacing.lg,
     },
     title: {
       fontFamily: fonts.black,
-      fontSize: T.size.xxl,
+      fontSize: T.size.title,
       color: colors.textPrimary,
       letterSpacing: T.tracking.tight,
+      lineHeight: 34,
     },
     subtitle: {
       fontFamily: fonts.regular,

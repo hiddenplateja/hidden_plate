@@ -12,7 +12,7 @@
 //   - Tap row → that user's profile
 //   - Empty state with friendly icon
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { ArrowLeft, UserPlus, Users } from "lucide-react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -217,11 +217,7 @@ export default function FollowsListScreen() {
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >
-          <MaterialCommunityIcons
-            name="arrow-left"
-            size={22}
-            color={colors.textPrimary}
-          />
+          <ArrowLeft size={20} color={colors.textPrimary} strokeWidth={2.2} />
         </Pressable>
         <View style={styles.headerTitleWrap}>
           <Text style={styles.headerTitle}>{screenTitle}</Text>
@@ -264,15 +260,11 @@ export default function FollowsListScreen() {
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <View style={styles.emptyIconWrap}>
-                <MaterialCommunityIcons
-                  name={
-                    isFollowersList
-                      ? "account-group-outline"
-                      : "account-multiple-outline"
-                  }
-                  size={32}
-                  color={colors.primary}
-                />
+                {isFollowersList ? (
+                  <Users size={30} color={colors.textPrimary} strokeWidth={1.8} />
+                ) : (
+                  <UserPlus size={30} color={colors.textPrimary} strokeWidth={1.8} />
+                )}
               </View>
               <Text style={styles.emptyTitle}>
                 {isFollowersList
@@ -378,7 +370,7 @@ function makeStyles(c: ThemeColors) {
   retryText: {
     fontFamily: fonts.bold,
     fontSize: T.size.base,
-    color: colors.textInverse,
+    color: colors.onPrimary,
   },
   listContent: {
     paddingBottom: 100,

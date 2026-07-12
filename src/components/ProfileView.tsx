@@ -14,14 +14,13 @@
 // the background; failure reverts state. Block toggle works the same way and
 // is passed down to ProfileHeader (which renders the ⋯ menu).
 //
-// Three content tabs (own profile) / two (other profiles):
+// Content tabs:
 //   "all"   → the user's reviews (loaded eagerly with the profile)
 //   "likes" → reviews the user has liked (lazy-loaded on first visit)
-//   "saved" → favorites preview, up to 5, with "See all" → /(tabs)/saved
-//             (hidden entirely on other users' profiles; data layer also
-//              enforces privacy via per-doc Read on the saved collection)
+//   "lists" → the user's collections (lazy-loaded; public-only for others)
+//   (Saved is NOT a profile tab — it lives on its own bottom-nav tab.)
 //
-// Lazy-loading strategy for likes + saved:
+// Lazy-loading strategy for likes + lists:
 //   We don't fetch either in the initial parallel load — both are secondary
 //   surfaces and most opens of the profile never touch them. First time
 //   the user taps the tab we fetch; subsequent visits reuse what's in state
@@ -38,36 +37,44 @@
 //     profile still renders with the user info; affected sections show
 //     zeroes or "no reviews yet" placeholders. Better than a blank wall
 //     when a single sub-query hiccups.
-//   - Lazy tab loads (likes, saved) on failure → the tab's "error" status
+//   - Lazy tab loads (likes, lists) on failure → the tab's "error" status
 //     stays set; user sees an inline ErrorState in the empty area with
 //     a retry button. We don't pollute the rest of the profile.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Image } from "expo-image";
+import {
+  Ban,
+  CirclePlus,
+  CloudOff,
+  Heart,
+  Library,
+  MessageSquareText,
+  Plus,
+  UserCheck,
+  UserRoundX,
+  UserX,
+} from "lucide-react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Dimensions,
   FlatList,
-  Modal,
   Pressable,
   RefreshControl,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 
 import { ErrorState } from "@/components/ErrorState";
+import { LikedPostItem } from "@/components/LikedPostItem";
 import { ListCard } from "@/components/ListCard";
 import {
   ProfileContentTabs,
   type ProfileContentTab,
 } from "@/components/ProfileContentTabs";
+import { PhotoViewer } from "@/components/PhotoViewer";
 import { ProfileHeader } from "@/components/ProfileHeader";
-import { RestaurantSmallCard } from "@/components/RestaurantSmallCard";
 import {
   UserReviewItem,
   UserReviewItemSkeleton,
@@ -90,32 +97,36 @@ import {
   listPublicListsByUser,
   listsEnabled,
 } from "@/services/lists";
+import { listLikedPostsByUser } from "@/services/postLikes";
 import { getRestaurantsByIds } from "@/services/restaurants";
 import { listLikedReviewsByUser } from "@/services/reviewLikes";
 import { getUserReviewStats, listReviewsByUser } from "@/services/reviews";
-import { listSavedRestaurants } from "@/services/saved";
 import { captureError } from "@/services/sentry";
 import { getImageViewUrl } from "@/services/storage";
-import { getUserById } from "@/services/users";
+import { getUserById, getUsersByIds } from "@/services/users";
 import { fonts, radius, spacing, typographyTokens as T } from "@/theme/colors";
 import type { ThemeColors } from "@/theme/themes";
 import { useThemedStyles } from "@/theme/useThemedStyles";
 import type { List } from "@/types/list";
+import type { Post } from "@/types/post";
 import type { Restaurant } from "@/types/restaurant";
 import type { Review } from "@/types/review";
 import type { User } from "@/types/user";
 
-const { width: SW } = Dimensions.get("window");
 const PAGE_SIZE = 20;
 
-// Saved-tab grid: two compact cards per row, sized to the screen minus the page
-// padding and the inter-card gap.
-const SAVED_CARD_WIDTH = (SW - spacing.screen * 2 - spacing.md) / 2;
+// One FlatList row — the Likes tab mixes liked reviews with liked community
+// posts, so rows carry a discriminant instead of being bare Reviews.
+type FeedRow =
+  | { kind: "review"; review: Review }
+  | { kind: "post"; post: Post };
 
-// Saved-tab preview cap. We fetch one extra (6) so we can detect overflow
-// and conditionally render the "See all" footer.
-const SAVED_PREVIEW_LIMIT = 5;
-const SAVED_FETCH_LIMIT = SAVED_PREVIEW_LIMIT + 1;
+// Stable row key; doubles as the lookup key into likedAtByKey.
+function rowKey(row: FeedRow): string {
+  return row.kind === "review"
+    ? `review:${row.review.id}`
+    : `post:${row.post.id}`;
+}
 
 interface ProfileViewProps {
   userId: string;
@@ -146,17 +157,20 @@ interface Data {
   restaurants: Map<string, Restaurant>;
   nextCursor: string | null;
   hasMore: boolean;
-  // Likes tab — populated on first visit, kept around for the session.
+  // Likes tab — liked reviews AND liked community posts, merged by like
+  // recency. Populated on first visit, kept around for the session. Each
+  // source paginates independently (cursor lives on its likes collection);
+  // likedAtByKey ("review:<id>" / "post:<id>" → like time) drives the merge.
   likedReviews: Review[];
   likedRestaurants: Map<string, Restaurant>;
   likedNextCursor: string | null;
   likedHasMore: boolean;
+  likedPosts: Post[];
+  likedPostAuthors: Map<string, User>;
+  likedPostsNextCursor: string | null;
+  likedPostsHasMore: boolean;
+  likedAtByKey: Map<string, string>;
   likedStatus: "idle" | "loading" | "ready" | "error";
-  // Saved tab — own profile only. Holds up to SAVED_FETCH_LIMIT items;
-  // savedHasMore is true when the fetch returned more than the preview cap.
-  savedFavorites: Restaurant[];
-  savedHasMore: boolean;
-  savedStatus: "idle" | "loading" | "ready" | "error";
   // Lists (Collections) tab — public lists for others, all for self. Lazy.
   lists: List[];
   listCovers: Map<string, string | null>;
@@ -349,16 +363,18 @@ export function ProfileView({
           restaurants,
           nextCursor,
           hasMore,
-          // Likes + Saved tabs start empty; lazy-loaded on first tap.
+          // Likes + Lists tabs start empty; lazy-loaded on first tap.
           // On refresh both reset so the next visit refetches.
           likedReviews: [],
           likedRestaurants: new Map(),
           likedNextCursor: null,
           likedHasMore: false,
+          likedPosts: [],
+          likedPostAuthors: new Map(),
+          likedPostsNextCursor: null,
+          likedPostsHasMore: false,
+          likedAtByKey: new Map(),
           likedStatus: "idle",
-          savedFavorites: [],
-          savedHasMore: false,
-          savedStatus: "idle",
           lists: [],
           listCovers: new Map(),
           listsStatus: "idle",
@@ -380,7 +396,10 @@ export function ProfileView({
     load(true);
   }, [load]);
 
-  // Fetch the first page of likes. Called lazily on first Likes-tab tap.
+  // Fetch the first page of likes — liked reviews AND liked posts, in
+  // parallel. Called lazily on first Likes-tab tap. The posts fetch is
+  // tolerant (empty page on failure), so only a reviews failure errors
+  // the tab.
   const loadLikes = useCallback(async () => {
     if (state.status !== "ready") return;
     if (state.data.likedStatus === "loading") return;
@@ -394,11 +413,20 @@ export function ProfileView({
     });
 
     try {
-      const page = await listLikedReviewsByUser(userId, {
-        pageSize: PAGE_SIZE,
-      });
+      const [page, postPage] = await Promise.all([
+        listLikedReviewsByUser(userId, { pageSize: PAGE_SIZE }),
+        listLikedPostsByUser(userId, { pageSize: PAGE_SIZE }),
+      ]);
       const restaurantIds = page.items.map((r) => r.restaurantId);
-      const restaurants = await getRestaurantsByIds(restaurantIds);
+      const authorIds = postPage.items.map((p) => p.userId);
+      const [restaurants, authors] = await Promise.all([
+        getRestaurantsByIds(restaurantIds),
+        getUsersByIds(authorIds),
+      ]);
+
+      const likedAtByKey = new Map<string, string>();
+      for (const [id, at] of page.likedAt) likedAtByKey.set(`review:${id}`, at);
+      for (const [id, at] of postPage.likedAt) likedAtByKey.set(`post:${id}`, at);
 
       setState((prev) => {
         if (prev.status !== "ready") return prev;
@@ -410,6 +438,11 @@ export function ProfileView({
             likedRestaurants: restaurants,
             likedNextCursor: page.nextCursor,
             likedHasMore: page.hasMore,
+            likedPosts: postPage.items,
+            likedPostAuthors: authors,
+            likedPostsNextCursor: postPage.nextCursor,
+            likedPostsHasMore: postPage.hasMore,
+            likedAtByKey,
             likedStatus: "ready",
           },
         };
@@ -429,59 +462,6 @@ export function ProfileView({
       });
     }
   }, [state, userId]);
-
-  // Fetch the favorites preview for the Saved tab. Own profile only —
-  // we don't even surface the tab elsewhere. Uses listSavedRestaurants
-  // which reads account.get() under the hood; that's fine because we
-  // only call this when isOwn === true.
-  const loadSaved = useCallback(async () => {
-    if (state.status !== "ready") return;
-    if (!isOwn) return;
-    if (state.data.savedStatus === "loading") return;
-
-    setState((prev) => {
-      if (prev.status !== "ready") return prev;
-      return {
-        status: "ready",
-        data: { ...prev.data, savedStatus: "loading" },
-      };
-    });
-
-    try {
-      const results = await listSavedRestaurants("favorite", SAVED_FETCH_LIMIT);
-      // Filter out deleted restaurants — same pattern as the saved tab.
-      const restaurants = results
-        .map((r) => r.restaurant)
-        .filter((r): r is Restaurant => r !== null);
-      const hasMore = restaurants.length > SAVED_PREVIEW_LIMIT;
-      const preview = restaurants.slice(0, SAVED_PREVIEW_LIMIT);
-
-      setState((prev) => {
-        if (prev.status !== "ready") return prev;
-        return {
-          status: "ready",
-          data: {
-            ...prev.data,
-            savedFavorites: preview,
-            savedHasMore: hasMore,
-            savedStatus: "ready",
-          },
-        };
-      });
-    } catch (err) {
-      captureError(err, {
-        screen: "profile",
-        op: "loadSaved",
-      });
-      setState((prev) => {
-        if (prev.status !== "ready") return prev;
-        return {
-          status: "ready",
-          data: { ...prev.data, savedStatus: "error" },
-        };
-      });
-    }
-  }, [state, isOwn]);
 
   // Fetch the user's collections. Own profile → all of mine; other users →
   // their public collections only. Lazy-loaded on first Lists-tab tap.
@@ -539,7 +519,7 @@ export function ProfileView({
     }
   }, [state, isOwn, userId]);
 
-  // Wrap the tab change so first-tap on Likes or Saved triggers a fetch.
+  // Wrap the tab change so first-tap on Likes or Lists triggers a fetch.
   const handleTabChange = useCallback(
     (tab: ProfileContentTab) => {
       setActiveTab(tab);
@@ -548,15 +528,9 @@ export function ProfileView({
         loadLikes();
       } else if (tab === "lists" && state.data.listsStatus === "idle") {
         loadLists();
-      } else if (
-        tab === "saved" &&
-        isOwn &&
-        state.data.savedStatus === "idle"
-      ) {
-        loadSaved();
       }
     },
-    [state, isOwn, loadLikes, loadLists, loadSaved],
+    [state, loadLikes, loadLists],
   );
 
   const handleLoadMore = useCallback(async () => {
@@ -604,30 +578,68 @@ export function ProfileView({
     }
 
     if (activeTab === "likes") {
-      if (!state.data.likedHasMore) return;
+      if (!state.data.likedHasMore && !state.data.likedPostsHasMore) return;
       if (state.data.likedStatus !== "ready") return;
       setLoadingMore(true);
       try {
-        const page = await listLikedReviewsByUser(userId, {
-          pageSize: PAGE_SIZE,
-          cursor: state.data.likedNextCursor,
-        });
-        const restaurantIds = page.items.map((r) => r.restaurantId);
-        const newRestaurants = await getRestaurantsByIds(restaurantIds);
+        // Advance whichever sources still have pages, in parallel. The merged
+        // list re-sorts by like time, so uneven page depths stay in order.
+        const [page, postPage] = await Promise.all([
+          state.data.likedHasMore
+            ? listLikedReviewsByUser(userId, {
+                pageSize: PAGE_SIZE,
+                cursor: state.data.likedNextCursor,
+              })
+            : null,
+          state.data.likedPostsHasMore
+            ? listLikedPostsByUser(userId, {
+                pageSize: PAGE_SIZE,
+                cursor: state.data.likedPostsNextCursor,
+              })
+            : null,
+        ]);
+        const restaurantIds = page?.items.map((r) => r.restaurantId) ?? [];
+        const authorIds = postPage?.items.map((p) => p.userId) ?? [];
+        const [newRestaurants, newAuthors] = await Promise.all([
+          getRestaurantsByIds(restaurantIds),
+          getUsersByIds(authorIds),
+        ]);
         setState((prev) => {
           if (prev.status !== "ready") return prev;
-          const mergedRestaurants = new Map([
-            ...prev.data.likedRestaurants,
-            ...newRestaurants,
-          ]);
+          const likedAtByKey = new Map(prev.data.likedAtByKey);
+          for (const [id, at] of page?.likedAt ?? [])
+            likedAtByKey.set(`review:${id}`, at);
+          for (const [id, at] of postPage?.likedAt ?? [])
+            likedAtByKey.set(`post:${id}`, at);
           return {
             status: "ready",
             data: {
               ...prev.data,
-              likedReviews: [...prev.data.likedReviews, ...page.items],
-              likedRestaurants: mergedRestaurants,
-              likedNextCursor: page.nextCursor,
-              likedHasMore: page.hasMore,
+              likedReviews: page
+                ? [...prev.data.likedReviews, ...page.items]
+                : prev.data.likedReviews,
+              likedRestaurants: new Map([
+                ...prev.data.likedRestaurants,
+                ...newRestaurants,
+              ]),
+              likedNextCursor: page
+                ? page.nextCursor
+                : prev.data.likedNextCursor,
+              likedHasMore: page ? page.hasMore : prev.data.likedHasMore,
+              likedPosts: postPage
+                ? [...prev.data.likedPosts, ...postPage.items]
+                : prev.data.likedPosts,
+              likedPostAuthors: new Map([
+                ...prev.data.likedPostAuthors,
+                ...newAuthors,
+              ]),
+              likedPostsNextCursor: postPage
+                ? postPage.nextCursor
+                : prev.data.likedPostsNextCursor,
+              likedPostsHasMore: postPage
+                ? postPage.hasMore
+                : prev.data.likedPostsHasMore,
+              likedAtByKey,
             },
           };
         });
@@ -642,8 +654,6 @@ export function ProfileView({
       }
       return;
     }
-
-    // "saved" tab — preview only, no pagination. "See all" routes to /(tabs)/saved.
   }, [state, userId, activeTab, loadingMore]);
 
   const handleToggleFollow = useCallback(async () => {
@@ -744,11 +754,12 @@ export function ProfileView({
     [router],
   );
 
-  const handleSeeAllSaved = useCallback(() => {
-    // Land on Favorites sub-tab. The /(tabs)/saved screen reads ?tab=
-    // and initializes activeTab from it.
-    router.push("/(tabs)/saved?tab=favorite");
-  }, [router]);
+  const handlePostPress = useCallback(
+    (postId: string) => {
+      router.push(`/post/${postId}`);
+    },
+    [router],
+  );
 
   const handlePhotoTap = useCallback(
     (imageIds: string[], startIndex: number) => {
@@ -846,7 +857,7 @@ export function ProfileView({
       <View style={styles.wrap}>
         <ErrorState
           variant="screen"
-          icon="account-alert-outline"
+          icon={UserRoundX}
           title="Couldn't load this profile"
           body="Check your connection and try again."
           onRetry={() => load()}
@@ -868,9 +879,9 @@ export function ProfileView({
     likedReviews,
     likedRestaurants,
     likedStatus,
-    savedFavorites,
-    savedHasMore,
-    savedStatus,
+    likedPosts,
+    likedPostAuthors,
+    likedAtByKey,
     lists,
     listCovers,
     listsStatus,
@@ -884,7 +895,7 @@ export function ProfileView({
       <View style={styles.wrap}>
         <ErrorState
           variant="screen"
-          icon="account-off-outline"
+          icon={UserX}
           title="This profile isn't available"
           body="You can't view this profile right now."
         />
@@ -898,11 +909,7 @@ export function ProfileView({
       <View style={styles.wrap}>
         <View style={styles.blockedContainer}>
           <View style={styles.emptyIconWrap}>
-            <MaterialCommunityIcons
-              name="block-helper"
-              size={32}
-              color={colors.primary}
-            />
+            <Ban size={30} color={colors.textPrimary} strokeWidth={1.8} />
           </View>
           <Text style={styles.emptyTitle}>You blocked {user.displayName}</Text>
           <Text style={styles.emptyBody}>
@@ -914,11 +921,7 @@ export function ProfileView({
             accessibilityRole="button"
             accessibilityLabel={`Unblock ${user.displayName}`}
           >
-            <MaterialCommunityIcons
-              name="account-check-outline"
-              size={18}
-              color={colors.textInverse}
-            />
+            <UserCheck size={17} color={colors.onPrimary} strokeWidth={2} />
             <Text style={styles.unblockText}>Unblock</Text>
           </Pressable>
         </View>
@@ -926,34 +929,39 @@ export function ProfileView({
     );
   }
 
-  // Saved tab uses its own renderer below; for the "all" and "likes" tabs
-  // we feed the FlatList an array of reviews. On the Saved tab we feed it
-  // an empty array and render the favorites grid inside ListEmptyComponent
-  // so we keep one FlatList (pull-to-refresh + header stays consistent).
-  const listData =
-    activeTab === "all" ? reviews : activeTab === "likes" ? likedReviews : [];
+  // The "all" tab feeds the FlatList the user's reviews; the Likes tab feeds
+  // a merged list of liked reviews + liked posts sorted by like recency
+  // (likedAtByKey). The Lists tab feeds an empty array and renders inside
+  // ListEmptyComponent so we keep one FlatList (pull-to-refresh + header
+  // stays consistent).
+  const likedEntries: FeedRow[] =
+    activeTab === "likes"
+      ? [
+          ...likedReviews.map((r) => ({ kind: "review" as const, review: r })),
+          ...likedPosts.map((p) => ({ kind: "post" as const, post: p })),
+        ].sort(
+          (a, b) =>
+            (likedAtByKey.get(rowKey(b)) ?? "").localeCompare(
+              likedAtByKey.get(rowKey(a)) ?? "",
+            ),
+        )
+      : [];
+  const listData: FeedRow[] =
+    activeTab === "all"
+      ? reviews.map((r) => ({ kind: "review" as const, review: r }))
+      : likedEntries;
   const restaurantMap = activeTab === "likes" ? likedRestaurants : restaurants;
+
+  const likesEmpty = likedReviews.length === 0 && likedPosts.length === 0;
 
   // Tab-specific loading state for the empty area
   const showLikesLoading =
-    activeTab === "likes" &&
-    likedStatus === "loading" &&
-    likedReviews.length === 0;
-  const showSavedLoading =
-    activeTab === "saved" &&
-    savedStatus === "loading" &&
-    savedFavorites.length === 0;
+    activeTab === "likes" && likedStatus === "loading" && likesEmpty;
 
   // Tab-specific error state. We surface these inline (the rest of the
   // profile keeps rendering) because the tabs are independently loadable.
   const showLikesError =
-    activeTab === "likes" &&
-    likedStatus === "error" &&
-    likedReviews.length === 0;
-  const showSavedError =
-    activeTab === "saved" &&
-    savedStatus === "error" &&
-    savedFavorites.length === 0;
+    activeTab === "likes" && likedStatus === "error" && likesEmpty;
   const showListsLoading =
     activeTab === "lists" && listsStatus === "loading" && lists.length === 0;
   const showListsError =
@@ -963,15 +971,24 @@ export function ProfileView({
     <View style={styles.wrap}>
       <FlatList
         data={listData}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <UserReviewItem
-            review={item}
-            restaurant={restaurantMap.get(item.restaurantId) ?? null}
-            onPress={handleRestaurantPress}
-            onPhotoTap={handlePhotoTap}
-          />
-        )}
+        keyExtractor={rowKey}
+        renderItem={({ item }) =>
+          item.kind === "review" ? (
+            <UserReviewItem
+              review={item.review}
+              restaurant={restaurantMap.get(item.review.restaurantId) ?? null}
+              onPress={handleRestaurantPress}
+              onPhotoTap={handlePhotoTap}
+            />
+          ) : (
+            <LikedPostItem
+              post={item.post}
+              author={likedPostAuthors.get(item.post.userId) ?? null}
+              onPress={handlePostPress}
+              onPhotoTap={handlePhotoTap}
+            />
+          )
+        }
         ListHeaderComponent={
           <>
             <ProfileHeader
@@ -994,40 +1011,31 @@ export function ProfileView({
             <ProfileContentTabs
               active={activeTab}
               onChange={handleTabChange}
-              isOwn={isOwn}
               showLists={listsEnabled()}
             />
-            {/* Breathing room so the first review card (or saved grid) doesn't
-                jam directly against the tab strip's bottom hairline. List
-                separators only render BETWEEN items, never before the first. */}
+            {/* Breathing room so the first review card doesn't jam directly
+                against the tab strip's bottom hairline. List separators only
+                render BETWEEN items, never before the first. */}
             <View style={styles.tabsSpacer} />
           </>
         }
         ListEmptyComponent={
-          showLikesLoading || showSavedLoading || showListsLoading ? (
+          showLikesLoading || showListsLoading ? (
             <View style={styles.tabLoader}>
               <ActivityIndicator color={colors.primary} />
             </View>
           ) : showLikesError ? (
             <ErrorState
               variant="inline"
-              icon="cloud-off-outline"
+              icon={CloudOff}
               title="Couldn't load likes"
               body="Tap to try again."
               onRetry={loadLikes}
             />
-          ) : showSavedError ? (
-            <ErrorState
-              variant="inline"
-              icon="cloud-off-outline"
-              title="Couldn't load favorites"
-              body="Tap to try again."
-              onRetry={loadSaved}
-            />
           ) : showListsError ? (
             <ErrorState
               variant="inline"
-              icon="cloud-off-outline"
+              icon={CloudOff}
               title="Couldn't load collections"
               body="Tap to try again."
               onRetry={loadLists}
@@ -1036,11 +1044,7 @@ export function ProfileView({
             lists.length === 0 ? (
               <View style={styles.emptyContainer}>
                 <View style={styles.emptyIconWrap}>
-                  <MaterialCommunityIcons
-                    name="bookmark-multiple-outline"
-                    size={32}
-                    color={colors.primary}
-                  />
+                  <Library size={30} color={colors.textPrimary} strokeWidth={1.8} />
                 </View>
                 <Text style={styles.emptyTitle}>
                   {isOwn ? "No collections yet" : "No public collections"}
@@ -1056,11 +1060,7 @@ export function ProfileView({
                     style={styles.newListBtn}
                     accessibilityRole="button"
                   >
-                    <MaterialCommunityIcons
-                      name="plus"
-                      size={18}
-                      color={colors.textInverse}
-                    />
+                    <Plus size={17} color={colors.onPrimary} strokeWidth={2.2} />
                     <Text style={styles.newListText}>New collection</Text>
                   </Pressable>
                 ) : null}
@@ -1073,11 +1073,7 @@ export function ProfileView({
                     style={styles.newListRow}
                     accessibilityRole="button"
                   >
-                    <MaterialCommunityIcons
-                      name="plus-circle-outline"
-                      size={22}
-                      color={colors.primary}
-                    />
+                    <CirclePlus size={21} color={colors.primary} strokeWidth={2} />
                     <Text style={styles.newListRowText}>New collection</Text>
                   </Pressable>
                 ) : null}
@@ -1099,10 +1095,10 @@ export function ProfileView({
           ) : activeTab === "all" ? (
             <View style={styles.emptyContainer}>
               <View style={styles.emptyIconWrap}>
-                <MaterialCommunityIcons
-                  name="comment-text-outline"
-                  size={32}
-                  color={colors.primary}
+                <MessageSquareText
+                  size={30}
+                  color={colors.textPrimary}
+                  strokeWidth={1.8}
                 />
               </View>
               <Text style={styles.emptyTitle}>
@@ -1117,67 +1113,17 @@ export function ProfileView({
           ) : activeTab === "likes" ? (
             <View style={styles.emptyContainer}>
               <View style={styles.emptyIconWrap}>
-                <MaterialCommunityIcons
-                  name="heart-outline"
-                  size={32}
-                  color={colors.primary}
-                />
+                <Heart size={30} color={colors.textPrimary} strokeWidth={1.8} />
               </View>
               <Text style={styles.emptyTitle}>
-                {isOwn ? "No liked reviews yet" : "No liked reviews"}
+                {isOwn ? "No likes yet" : "No likes"}
               </Text>
               <Text style={styles.emptyBody}>
                 {isOwn
-                  ? "Reviews you like will appear here."
-                  : `${user.displayName} hasn't liked any reviews yet.`}
+                  ? "Reviews and posts you like will appear here."
+                  : `${user.displayName} hasn't liked anything yet.`}
               </Text>
             </View>
-          ) : isOwn ? (
-            // Saved tab — favorites preview (own profile only)
-            savedFavorites.length === 0 ? (
-              <View style={styles.emptyContainer}>
-                <View style={styles.emptyIconWrap}>
-                  <MaterialCommunityIcons
-                    name="heart-outline"
-                    size={32}
-                    color={colors.primary}
-                  />
-                </View>
-                <Text style={styles.emptyTitle}>No favorites yet</Text>
-                <Text style={styles.emptyBody}>
-                  Tap the heart on any restaurant to add it here for quick
-                  access.
-                </Text>
-              </View>
-            ) : (
-              <View style={styles.savedSection}>
-                <View style={styles.savedGrid}>
-                  {savedFavorites.map((restaurant) => (
-                    <RestaurantSmallCard
-                      key={restaurant.id}
-                      restaurant={restaurant}
-                      onPress={handleRestaurantPress}
-                      width={SAVED_CARD_WIDTH}
-                    />
-                  ))}
-                </View>
-                {savedHasMore ? (
-                  <Pressable
-                    onPress={handleSeeAllSaved}
-                    style={styles.seeAllBtn}
-                    accessibilityRole="button"
-                    accessibilityLabel="See all saved favorites"
-                  >
-                    <Text style={styles.seeAllLabel}>See all favorites</Text>
-                    <MaterialCommunityIcons
-                      name="chevron-right"
-                      size={18}
-                      color={colors.primary}
-                    />
-                  </Pressable>
-                ) : null}
-              </View>
-            )
           ) : null
         }
         ListFooterComponent={
@@ -1202,51 +1148,11 @@ export function ProfileView({
         }
       />
 
-      <Modal
-        visible={activePhotoIndex !== null}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setActivePhotoIndex(null)}
-      >
-        <View style={photoStyles.overlay}>
-          <SafeAreaView style={{ flex: 1 }}>
-            <Pressable
-              style={photoStyles.closeBtn}
-              onPress={() => setActivePhotoIndex(null)}
-              hitSlop={10}
-            >
-              <MaterialCommunityIcons
-                name="close"
-                size={22}
-                color={colors.white}
-              />
-            </Pressable>
-            <FlatList
-              data={activePhotoSet}
-              keyExtractor={(id, i) => `viewer-${id}-${i}`}
-              horizontal
-              pagingEnabled
-              showsHorizontalScrollIndicator={false}
-              initialScrollIndex={activePhotoIndex ?? 0}
-              getItemLayout={(_, index) => ({
-                length: SW,
-                offset: SW * index,
-                index,
-              })}
-              renderItem={({ item: fileId }) => (
-                <View style={{ width: SW, justifyContent: "center" }}>
-                  <Image
-                    source={{ uri: getImageViewUrl(fileId) }}
-                    style={{ width: SW, height: SW * 1.1 }}
-                    contentFit="contain"
-                    cachePolicy="memory-disk"
-                  />
-                </View>
-              )}
-            />
-          </SafeAreaView>
-        </View>
-      </Modal>
+      <PhotoViewer
+        photos={activePhotoSet.map(getImageViewUrl)}
+        index={activePhotoIndex}
+        onClose={() => setActivePhotoIndex(null)}
+      />
     </View>
   );
 }
@@ -1319,42 +1225,10 @@ function makeStyles(c: ThemeColors) {
   unblockText: {
     fontFamily: fonts.bold,
     fontSize: T.size.base,
-    color: colors.textInverse,
+    color: colors.onPrimary,
   },
   footerLoader: { paddingVertical: spacing.lg },
   tabLoader: { paddingVertical: spacing.huge, alignItems: "center" },
-
-  // Saved-tab preview list (own profile only). No top padding — the
-  // tabsSpacer in the list header already provides the gap below the tabs.
-  savedSection: {
-    paddingTop: 0,
-    paddingHorizontal: 0,
-  },
-  // Two-column grid of compact cards.
-  savedGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    paddingHorizontal: spacing.screen,
-    gap: spacing.md,
-  },
-  seeAllBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 4,
-    paddingVertical: spacing.md,
-    marginHorizontal: spacing.screen,
-    marginTop: spacing.xs,
-    borderRadius: radius.lg,
-    backgroundColor: colors.primaryLight,
-    borderWidth: 1,
-    borderColor: colors.primary,
-  },
-  seeAllLabel: {
-    fontFamily: fonts.bold,
-    fontSize: T.size.sm,
-    color: colors.primary,
-  },
   listsSection: { paddingTop: 0 },
   newListRow: {
     flexDirection: "row",
@@ -1381,23 +1255,8 @@ function makeStyles(c: ThemeColors) {
   newListText: {
     fontFamily: fonts.bold,
     fontSize: T.size.base,
-    color: colors.textInverse,
+    color: colors.onPrimary,
   },
   });
 }
 
-const photoStyles = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.96)" },
-  closeBtn: {
-    position: "absolute",
-    top: spacing.xl,
-    right: spacing.screen,
-    zIndex: 10,
-    width: 40,
-    height: 40,
-    borderRadius: radius.full,
-    backgroundColor: "rgba(255,255,255,0.15)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-});

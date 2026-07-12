@@ -13,8 +13,8 @@
 // Mark-all-read happens on screen open if there are unread items —
 // matches the spec: "Tapping the notifications screen marks them all read."
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useFocusEffect, useRouter } from "expo-router";
+import { ArrowLeft, Bell } from "lucide-react-native";
+import { useFocusEffect, useRouter, type Href } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
     ActivityIndicator,
@@ -52,13 +52,106 @@ function sectionFor(iso: string): (typeof SECTION_ORDER)[number] {
   return "Earlier";
 }
 
-function buildSections(
-  items: AppNotification[],
-): { title: string; data: AppNotification[] }[] {
-  const buckets: Record<string, AppNotification[]> = {};
+// ── Aggregation ─────────────────────────────────────────────────────────────
+// Collapse many same-kind notifications on the SAME target into one row
+// ("Jose and 5 others liked your post"), but only once a group reaches
+// GROUP_THRESHOLD members. Below that, rows stay individual.
+const GROUP_THRESHOLD = 3;
+
+/** A list row: either a lone notification or an aggregated group. */
+type Row =
+  | { kind: "single"; id: string; sortTs: number; notification: AppNotification }
+  | {
+      kind: "group";
+      id: string;
+      sortTs: number;
+      /** Most-recent member — drives the avatar + deep-link target. */
+      latest: AppNotification;
+      members: AppNotification[];
+      body: string;
+    };
+
+/**
+ * The key notifications must share to be grouped. like/comment group per target
+ * (a specific post or review); follows group together ("… followed you").
+ * Everything else (admin broadcasts) returns null and never groups.
+ */
+function groupKeyFor(n: AppNotification): string | null {
+  if (n.type === "like" || n.type === "comment") {
+    const target = n.data.postId
+      ? `post:${n.data.postId}`
+      : n.data.reviewId
+        ? `review:${n.data.reviewId}`
+        : null;
+    return target ? `${n.type}:${target}` : null;
+  }
+  if (n.type === "follow") return "follow";
+  return null;
+}
+
+/** "Jose and 5 others liked your post" — name from the most recent actor. */
+function composeGroupBody(latest: AppNotification, othersCount: number): string {
+  const name = latest.data.actorName?.trim() || "Someone";
+  const who = `${name} and ${othersCount} ${
+    othersCount === 1 ? "other" : "others"
+  }`;
+  const isPost = !!latest.data.postId;
+  switch (latest.type) {
+    case "like":
+      return `${who} liked your ${isPost ? "post" : "review"}`;
+    case "comment":
+      return `${who} commented on your ${isPost ? "post" : "review"}`;
+    case "follow":
+      return `${who} followed you`;
+    default:
+      return latest.body;
+  }
+}
+
+function buildRows(items: AppNotification[]): Row[] {
+  // `items` arrive newest-first, so the first member seen for a key is newest.
+  const buckets = new Map<string, AppNotification[]>();
+  const rows: Row[] = [];
+  const ts = (n: AppNotification) => new Date(n.createdAt).getTime();
+
   for (const n of items) {
-    const key = sectionFor(n.createdAt);
-    (buckets[key] ??= []).push(n);
+    const key = groupKeyFor(n);
+    if (!key) {
+      rows.push({ kind: "single", id: n.id, sortTs: ts(n), notification: n });
+      continue;
+    }
+    const arr = buckets.get(key);
+    if (arr) arr.push(n);
+    else buckets.set(key, [n]);
+  }
+
+  for (const [key, members] of buckets) {
+    if (members.length >= GROUP_THRESHOLD) {
+      const latest = members[0];
+      rows.push({
+        kind: "group",
+        id: `group:${key}`,
+        sortTs: ts(latest),
+        latest,
+        members,
+        body: composeGroupBody(latest, members.length - 1),
+      });
+    } else {
+      for (const n of members) {
+        rows.push({ kind: "single", id: n.id, sortTs: ts(n), notification: n });
+      }
+    }
+  }
+
+  rows.sort((a, b) => b.sortTs - a.sortTs);
+  return rows;
+}
+
+function buildSections(rows: Row[]): { title: string; data: Row[] }[] {
+  const buckets: Record<string, Row[]> = {};
+  for (const r of rows) {
+    const key = sectionFor(new Date(r.sortTs).toISOString());
+    (buckets[key] ??= []).push(r);
   }
   return SECTION_ORDER.filter((k) => buckets[k]?.length).map((k) => ({
     title: k,
@@ -100,7 +193,8 @@ export default function NotificationsScreen() {
     };
   }, [notifications]);
 
-  const sections = useMemo(() => buildSections(notifications), [notifications]);
+  const rows = useMemo(() => buildRows(notifications), [notifications]);
+  const sections = useMemo(() => buildSections(rows), [rows]);
 
   // Mark all as read when the screen first comes into focus.
   // Subsequent focus events (back-nav from review/profile) won't trigger
@@ -122,14 +216,9 @@ export default function NotificationsScreen() {
     setRefreshing(false);
   }, [refresh]);
 
-  const handlePress = useCallback(
-    async (notification: AppNotification) => {
-      // Mark this one read first (optimistic; safe to call on already-read too)
-      if (!notification.isRead) {
-        markAsRead(notification.id);
-      }
-
-      // Deep-link based on type
+  // Deep-link for a notification based on its type + payload.
+  const navigate = useCallback(
+    (notification: AppNotification) => {
       switch (notification.type) {
         case "follow":
           if (notification.actorId) {
@@ -138,7 +227,9 @@ export default function NotificationsScreen() {
           break;
         case "like":
         case "comment":
-          if (notification.data.reviewId) {
+          if (notification.data.postId) {
+            router.push(`/post/${notification.data.postId}` as unknown as Href);
+          } else if (notification.data.reviewId) {
             router.push(`/review/${notification.data.reviewId}`);
           }
           break;
@@ -149,7 +240,37 @@ export default function NotificationsScreen() {
           break;
       }
     },
-    [markAsRead, router],
+    [router],
+  );
+
+  const handlePress = useCallback(
+    async (notification: AppNotification) => {
+      // Mark this one read first (optimistic; safe to call on already-read too)
+      if (!notification.isRead) {
+        markAsRead(notification.id);
+      }
+      navigate(notification);
+    },
+    [markAsRead, navigate],
+  );
+
+  // An aggregated row: mark every member read, then deep-link via the latest.
+  const handleGroupPress = useCallback(
+    (group: Extract<Row, { kind: "group" }>) => {
+      for (const m of group.members) {
+        if (!m.isRead) markAsRead(m.id);
+      }
+      navigate(group.latest);
+    },
+    [markAsRead, navigate],
+  );
+
+  // Deleting an aggregated row removes every member.
+  const handleGroupDelete = useCallback(
+    (group: Extract<Row, { kind: "group" }>) => {
+      for (const m of group.members) removeNotification(m.id);
+    },
+    [removeNotification],
   );
 
   return (
@@ -163,11 +284,7 @@ export default function NotificationsScreen() {
           accessibilityRole="button"
           accessibilityLabel="Back"
         >
-          <MaterialCommunityIcons
-            name="arrow-left"
-            size={22}
-            color={colors.textPrimary}
-          />
+          <ArrowLeft size={20} color={colors.textPrimary} strokeWidth={2.2} />
         </Pressable>
 
         <View style={styles.titleWrap}>
@@ -189,14 +306,24 @@ export default function NotificationsScreen() {
       <SectionList
         sections={sections}
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <NotificationItem
-            notification={item}
-            actor={actors.get(item.actorId) ?? null}
-            onPress={handlePress}
-            onDelete={removeNotification}
-          />
-        )}
+        renderItem={({ item }) =>
+          item.kind === "group" ? (
+            <NotificationItem
+              notification={item.latest}
+              actor={actors.get(item.latest.actorId) ?? null}
+              overrideBody={item.body}
+              onPress={() => handleGroupPress(item)}
+              onDelete={() => handleGroupDelete(item)}
+            />
+          ) : (
+            <NotificationItem
+              notification={item.notification}
+              actor={actors.get(item.notification.actorId) ?? null}
+              onPress={handlePress}
+              onDelete={removeNotification}
+            />
+          )
+        }
         renderSectionHeader={({ section }) => (
           <Text style={styles.sectionHeader}>{section.title}</Text>
         )}
@@ -226,11 +353,7 @@ export default function NotificationsScreen() {
           !isLoading ? (
             <View style={styles.emptyState}>
               <View style={styles.emptyIconWrap}>
-                <MaterialCommunityIcons
-                  name="bell-outline"
-                  size={32}
-                  color={colors.primary}
-                />
+                <Bell size={30} color={colors.textPrimary} strokeWidth={1.8} />
               </View>
               <Text style={styles.emptyTitle}>No notifications yet</Text>
               <Text style={styles.emptyBody}>
@@ -267,6 +390,7 @@ function makeStyles(c: ThemeColors) {
     width: 36,
     height: 36,
     borderRadius: radius.full,
+    backgroundColor: colors.surface,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -294,7 +418,7 @@ function makeStyles(c: ThemeColors) {
   unreadBadgeText: {
     fontFamily: fonts.bold,
     fontSize: 11,
-    color: colors.textInverse,
+    color: colors.onPrimary,
   },
   rightSpacer: { width: 36 },
 
@@ -324,7 +448,7 @@ function makeStyles(c: ThemeColors) {
     width: 72,
     height: 72,
     borderRadius: radius.full,
-    backgroundColor: colors.primaryLight,
+    backgroundColor: colors.surface,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: spacing.sm,

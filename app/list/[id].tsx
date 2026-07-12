@@ -3,7 +3,18 @@
 // Owners get Edit / Make public-private / Delete and a per-spot remove. Opens
 // from My Collections, the profile Lists tab, or a shared hiddenplate://list/… link.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import {
+  ArrowLeft,
+  CloudOff,
+  EllipsisVertical,
+  Globe,
+  Lock,
+  Pencil,
+  Share2,
+  Trash2,
+  UtensilsCrossed,
+  X,
+} from "lucide-react-native";
 import * as ExpoLinking from "expo-linking";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
@@ -11,8 +22,6 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
-  Modal,
-  Platform,
   Pressable,
   Share,
   StyleSheet,
@@ -21,6 +30,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { DraggableSheet } from "@/components/DraggableSheet";
 import { ErrorState } from "@/components/ErrorState";
 import { RestaurantWideCard } from "@/components/RestaurantWideCard";
 import { useAuth } from "@/hooks/useAuth";
@@ -166,19 +176,11 @@ export default function ListDetailScreen() {
         hitSlop={10}
         style={styles.iconBtn}
       >
-        <MaterialCommunityIcons
-          name="arrow-left"
-          size={24}
-          color={colors.textPrimary}
-        />
+        <ArrowLeft size={22} color={colors.textPrimary} strokeWidth={2.2} />
       </Pressable>
       <View style={styles.topRight}>
         <Pressable onPress={handleShare} hitSlop={10} style={styles.iconBtn}>
-          <MaterialCommunityIcons
-            name="share-variant"
-            size={22}
-            color={colors.textPrimary}
-          />
+          <Share2 size={20} color={colors.textPrimary} strokeWidth={2} />
         </Pressable>
         {isOwner ? (
           <Pressable
@@ -188,10 +190,10 @@ export default function ListDetailScreen() {
             accessibilityRole="button"
             accessibilityLabel="Collection options"
           >
-            <MaterialCommunityIcons
-              name="dots-vertical"
-              size={22}
+            <EllipsisVertical
+              size={20}
               color={colors.textPrimary}
+              strokeWidth={2}
             />
           </Pressable>
         ) : null}
@@ -216,7 +218,7 @@ export default function ListDetailScreen() {
         {header}
         <ErrorState
           variant="screen"
-          icon="cloud-off-outline"
+          icon={CloudOff}
           title="Couldn't load this collection"
           body="It may be private or no longer exist."
           onRetry={load}
@@ -231,11 +233,11 @@ export default function ListDetailScreen() {
   const listHeader = (
     <View style={styles.headerBlock}>
       <View style={styles.visRow}>
-        <MaterialCommunityIcons
-          name={list.isPublic ? "earth" : "lock"}
-          size={13}
-          color={colors.textMuted}
-        />
+        {list.isPublic ? (
+          <Globe size={13} color={colors.textMuted} strokeWidth={2} />
+        ) : (
+          <Lock size={13} color={colors.textMuted} strokeWidth={2} />
+        )}
         <Text style={styles.visText}>
           {list.isPublic ? "Public collection" : "Private collection"}
         </Text>
@@ -252,11 +254,7 @@ export default function ListDetailScreen() {
         style={styles.shareBtn}
         accessibilityRole="button"
       >
-        <MaterialCommunityIcons
-          name="share-variant"
-          size={18}
-          color={colors.textInverse}
-        />
+        <Share2 size={17} color={colors.onPrimary} strokeWidth={2} />
         <Text style={styles.shareText}>Share</Text>
       </Pressable>
       {isOwner && !list.isPublic ? (
@@ -288,11 +286,7 @@ export default function ListDetailScreen() {
                 accessibilityRole="button"
                 accessibilityLabel={`Remove ${item.name}`}
               >
-                <MaterialCommunityIcons
-                  name="close"
-                  size={16}
-                  color={colors.textInverse}
-                />
+                <X size={15} color={colors.textInverse} strokeWidth={2.4} />
               </Pressable>
             ) : null}
           </View>
@@ -304,10 +298,10 @@ export default function ListDetailScreen() {
         ListEmptyComponent={
           <View style={styles.empty}>
             <View style={styles.emptyIconWrap}>
-              <MaterialCommunityIcons
-                name="silverware-fork-knife"
+              <UtensilsCrossed
                 size={28}
-                color={colors.primary}
+                color={colors.textPrimary}
+                strokeWidth={1.8}
               />
             </View>
             <Text style={styles.emptyTitle}>No spots yet</Text>
@@ -320,58 +314,37 @@ export default function ListDetailScreen() {
         }
       />
 
-      <Modal
-        visible={menuOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setMenuOpen(false)}
-      >
-        <Pressable style={styles.sheetOverlay} onPress={() => setMenuOpen(false)}>
-          <Pressable style={styles.sheet} onPress={() => {}}>
-            <View style={styles.handle} />
-            <Pressable
-              style={styles.sheetItem}
-              onPress={() => {
-                setMenuOpen(false);
-                router.push({ pathname: "/list/edit/[id]", params: { id } });
-              }}
-            >
-              <MaterialCommunityIcons
-                name="pencil-outline"
-                size={22}
-                color={colors.textPrimary}
-              />
-              <Text style={styles.sheetItemText}>Edit details</Text>
-            </Pressable>
-            <Pressable style={styles.sheetItem} onPress={handleToggleVisibility}>
-              <MaterialCommunityIcons
-                name={list.isPublic ? "lock-outline" : "earth"}
-                size={22}
-                color={colors.textPrimary}
-              />
-              <Text style={styles.sheetItemText}>
-                {list.isPublic ? "Make private" : "Make public"}
-              </Text>
-            </Pressable>
-            <Pressable style={styles.sheetItem} onPress={handleDelete}>
-              <MaterialCommunityIcons
-                name="trash-can-outline"
-                size={22}
-                color={colors.error}
-              />
-              <Text style={[styles.sheetItemText, { color: colors.error }]}>
-                Delete collection
-              </Text>
-            </Pressable>
-            <Pressable
-              style={styles.cancelBtn}
-              onPress={() => setMenuOpen(false)}
-            >
-              <Text style={styles.cancelText}>Cancel</Text>
-            </Pressable>
-          </Pressable>
+      <DraggableSheet visible={menuOpen} onClose={() => setMenuOpen(false)}>
+        <Pressable
+          style={styles.sheetItem}
+          onPress={() => {
+            setMenuOpen(false);
+            router.push({ pathname: "/list/edit/[id]", params: { id } });
+          }}
+        >
+          <Pencil size={20} color={colors.textPrimary} strokeWidth={2} />
+          <Text style={styles.sheetItemText}>Edit details</Text>
         </Pressable>
-      </Modal>
+        <Pressable style={styles.sheetItem} onPress={handleToggleVisibility}>
+          {list.isPublic ? (
+            <Lock size={20} color={colors.textPrimary} strokeWidth={2} />
+          ) : (
+            <Globe size={20} color={colors.textPrimary} strokeWidth={2} />
+          )}
+          <Text style={styles.sheetItemText}>
+            {list.isPublic ? "Make private" : "Make public"}
+          </Text>
+        </Pressable>
+        <Pressable style={styles.sheetItem} onPress={handleDelete}>
+          <Trash2 size={20} color={colors.error} strokeWidth={2} />
+          <Text style={[styles.sheetItemText, { color: colors.error }]}>
+            Delete collection
+          </Text>
+        </Pressable>
+        <Pressable style={styles.cancelBtn} onPress={() => setMenuOpen(false)}>
+          <Text style={styles.cancelText}>Cancel</Text>
+        </Pressable>
+      </DraggableSheet>
     </SafeAreaView>
   );
 }
@@ -442,7 +415,7 @@ function makeStyles(c: ThemeColors) {
     shareText: {
       fontFamily: fonts.bold,
       fontSize: T.size.base,
-      color: colors.textInverse,
+      color: colors.onPrimary,
     },
     privateHint: {
       fontFamily: fonts.regular,
@@ -474,7 +447,7 @@ function makeStyles(c: ThemeColors) {
       width: 64,
       height: 64,
       borderRadius: radius.full,
-      backgroundColor: colors.primaryLight,
+      backgroundColor: colors.surface,
       alignItems: "center",
       justifyContent: "center",
     },
@@ -490,27 +463,6 @@ function makeStyles(c: ThemeColors) {
       color: colors.textSecondary,
       textAlign: "center",
       lineHeight: 22,
-    },
-    sheetOverlay: {
-      flex: 1,
-      backgroundColor: "rgba(0,0,0,0.4)",
-      justifyContent: "flex-end",
-    },
-    sheet: {
-      backgroundColor: colors.cardBackground,
-      borderTopLeftRadius: radius.xl,
-      borderTopRightRadius: radius.xl,
-      paddingHorizontal: spacing.xl,
-      paddingTop: spacing.md,
-      paddingBottom: Platform.OS === "ios" ? 40 : spacing.xl,
-    },
-    handle: {
-      width: 40,
-      height: 4,
-      borderRadius: 2,
-      backgroundColor: colors.divider,
-      alignSelf: "center",
-      marginBottom: spacing.md,
     },
     sheetItem: {
       flexDirection: "row",

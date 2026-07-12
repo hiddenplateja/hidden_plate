@@ -16,7 +16,7 @@
 // messages from network/SDK calls — they're confusing and sometimes
 // expose internal details. Pass a curated `title` and `body` instead.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { CircleAlert, RotateCw, type LucideIcon } from "lucide-react-native";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { fonts, radius, spacing, typographyTokens as T } from "@/theme/colors";
@@ -35,10 +35,10 @@ interface ErrorStateProps {
   /** Label on the retry button. Defaults to "Try again". */
   retryLabel?: string;
   /**
-   * Icon to display. Defaults to a generic alert circle. Pick something
-   * topical when it helps (e.g. cloud-off for network errors).
+   * Icon to display (a Lucide component). Defaults to a generic alert circle.
+   * Pick something topical when it helps (e.g. CloudOff for network errors).
    */
-  icon?: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon?: LucideIcon;
 }
 
 export function ErrorState({
@@ -47,17 +47,17 @@ export function ErrorState({
   body = "Please try again.",
   onRetry,
   retryLabel = "Try again",
-  icon = "alert-circle-outline",
+  icon: Icon = CircleAlert,
 }: ErrorStateProps) {
   const isScreen = variant === "screen";
   const { styles, colors } = useThemedStyles(makeStyles);
 
   return (
     <View style={isScreen ? styles.screenContainer : styles.inlineContainer}>
-      <MaterialCommunityIcons
-        name={icon}
-        size={isScreen ? 48 : 32}
+      <Icon
+        size={isScreen ? 44 : 30}
         color={colors.textMuted}
+        strokeWidth={1.8}
       />
       <Text style={isScreen ? styles.screenTitle : styles.inlineTitle}>
         {title}
@@ -77,11 +77,7 @@ export function ErrorState({
           accessibilityRole="button"
           accessibilityLabel={retryLabel}
         >
-          <MaterialCommunityIcons
-            name="refresh"
-            size={16}
-            color={colors.textInverse}
-          />
+          <RotateCw size={15} color={colors.onPrimary} strokeWidth={2.2} />
           <Text style={styles.retryBtnText}>{retryLabel}</Text>
         </Pressable>
       ) : null}
@@ -167,7 +163,7 @@ function makeStyles(c: ThemeColors) {
   retryBtnText: {
     fontFamily: fonts.bold,
     fontSize: T.size.sm,
-    color: colors.textInverse,
+    color: colors.onPrimary,
   },
   pressed: { opacity: 0.7 },
   });

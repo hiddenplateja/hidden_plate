@@ -5,8 +5,8 @@
 // worker URL is configured, the pay action explains card payments are being
 // set up.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { ArrowLeft, Check, CircleCheck, Lock, Star } from "lucide-react-native";
+import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -20,6 +20,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Button } from "@/components/ui/Button";
+import { PAID_FEATURES_ENABLED } from "@/constants/features";
 import { useAuth } from "@/hooks/useAuth";
 import {
   featuredStatus,
@@ -47,7 +48,16 @@ const PERKS = [
   "A verified-owner badge on your listing",
 ];
 
+// Paid featuring is gated off for the free launch. No UI links here, but a
+// deep link could still land on the route — bounce back to the restaurant page.
+// (Wrapper keeps the guard out of the hook-heavy screen below.)
 export default function PromoteScreen() {
+  const { id } = useLocalSearchParams<{ id: string }>();
+  if (!PAID_FEATURES_ENABLED) return <Redirect href={`/restaurant/${id}`} />;
+  return <PromoteScreenInner />;
+}
+
+function PromoteScreenInner() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { user } = useAuth();
@@ -146,11 +156,7 @@ export default function PromoteScreen() {
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >
-          <MaterialCommunityIcons
-            name="arrow-left"
-            size={22}
-            color={colors.textPrimary}
-          />
+          <ArrowLeft size={20} color={colors.textPrimary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.headerTitle}>Promote</Text>
         <View style={{ width: 36 }} />
@@ -170,11 +176,7 @@ export default function PromoteScreen() {
       ) : load.restaurant.ownerId !== user?.id ? (
         <View style={styles.center}>
           <View style={styles.noticeIcon}>
-            <MaterialCommunityIcons
-              name="account-lock-outline"
-              size={32}
-              color={colors.primary}
-            />
+            <Lock size={30} color={colors.textPrimary} strokeWidth={1.8} />
           </View>
           <Text style={styles.stateTitle}>Owners only</Text>
           <Text style={styles.stateBody}>
@@ -232,10 +234,11 @@ function PromoteBody({
       <View
         style={[styles.statusBanner, status.active && styles.statusBannerActive]}
       >
-        <MaterialCommunityIcons
-          name={status.active ? "star-check" : "star-outline"}
-          size={18}
+        <Star
+          size={17}
           color={status.active ? colors.primary : colors.textMuted}
+          fill={status.active ? colors.primary : "transparent"}
+          strokeWidth={2}
         />
         <Text style={styles.statusText}>
           {status.active
@@ -254,11 +257,7 @@ function PromoteBody({
       <View style={styles.perks}>
         {PERKS.map((perk) => (
           <View key={perk} style={styles.perkRow}>
-            <MaterialCommunityIcons
-              name="check-circle"
-              size={16}
-              color={colors.primary}
-            />
+            <CircleCheck size={16} color={colors.success} strokeWidth={2.2} />
             <Text style={styles.perkText}>{perk}</Text>
           </View>
         ))}
@@ -281,11 +280,7 @@ function PromoteBody({
                 style={[styles.radio, active && styles.radioActive]}
               >
                 {active ? (
-                  <MaterialCommunityIcons
-                    name="check"
-                    size={13}
-                    color={colors.textInverse}
-                  />
+                  <Check size={13} color={colors.onPrimary} strokeWidth={2.5} />
                 ) : null}
               </View>
               <View style={styles.planText}>
@@ -472,7 +467,7 @@ function makeStyles(c: ThemeColors) {
     planBadgeText: {
       fontFamily: fonts.bold,
       fontSize: T.size.xs,
-      color: colors.textInverse,
+      color: colors.onPrimary,
     },
     planSub: {
       fontFamily: fonts.regular,

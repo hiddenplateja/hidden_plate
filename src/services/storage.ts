@@ -34,7 +34,7 @@ export class StorageError extends Error {
 
 // ---------- File-ID helpers ----------
 
-type MediaType = "rest" | "rev" | "usr";
+type MediaType = "rest" | "rev" | "usr" | "post";
 
 function makeId(type: MediaType): string {
   // ID.unique() returns a 20-char alphanumeric string.
@@ -222,6 +222,14 @@ export async function uploadAvatar(file: LocalFile): Promise<string> {
   return uploadFile(file, "usr");
 }
 
+/** Community post photos — same size cap as review photos. */
+export async function uploadPostImage(file: LocalFile): Promise<string> {
+  if (file.size > MAX_REVIEW_IMAGE_BYTES) {
+    throw new StorageError("Image must be 5 MB or smaller.");
+  }
+  return uploadFile(file, "post");
+}
+
 export async function deleteImage(fileId: string): Promise<void> {
   try {
     await storage.deleteFile(appwriteConfig.buckets.media, fileId);
@@ -239,5 +247,6 @@ export function getMediaType(fileId: string): MediaType | "unknown" {
   if (fileId.startsWith("rest_")) return "rest";
   if (fileId.startsWith("rev_")) return "rev";
   if (fileId.startsWith("usr_")) return "usr";
+  if (fileId.startsWith("post_")) return "post";
   return "unknown";
 }

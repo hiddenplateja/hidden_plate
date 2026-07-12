@@ -83,7 +83,7 @@ export function ListForm({
         <Switch
           value={isPublic}
           onValueChange={setIsPublic}
-          trackColor={{ false: colors.divider, true: colors.primary }}
+          trackColor={{ false: colors.divider, true: colors.switchTrack }}
           thumbColor={colors.white}
           disabled={submitting}
         />

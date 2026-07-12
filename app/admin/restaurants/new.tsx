@@ -11,7 +11,7 @@ import {
   RestaurantForm,
   type RestaurantFormValues,
 } from "@/components/RestaurantForm";
-import { createRestaurant } from "@/services/restaurants";
+import { adminCreateRestaurant } from "@/services/restaurants";
 import type { ThemeColors } from "@/theme/themes";
 import { useThemedStyles } from "@/theme/useThemedStyles";
 
@@ -21,7 +21,7 @@ export default function AdminNewRestaurant() {
 
   const handleSubmit = useCallback(
     async (values: RestaurantFormValues) => {
-      await createRestaurant(values);
+      await adminCreateRestaurant(values);
       Alert.alert("Restaurant created", "It's now in your list.", [
         { text: "Done", onPress: () => router.back() },
       ]);

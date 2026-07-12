@@ -13,7 +13,13 @@
 // Search is fulltext, prefix-matching only. Limitations explained in
 // services/users.ts:searchUsers.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import {
+  ArrowLeft,
+  CircleX,
+  Search,
+  SearchX,
+  UserRoundSearch,
+} from "lucide-react-native";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -273,11 +279,7 @@ export default function SearchUsersScreen() {
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >
-          <MaterialCommunityIcons
-            name="arrow-left"
-            size={22}
-            color={colors.textPrimary}
-          />
+          <ArrowLeft size={20} color={colors.textPrimary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.headerTitle}>Find People</Text>
         <View style={{ width: 36 }} />
@@ -286,10 +288,10 @@ export default function SearchUsersScreen() {
       {/* Search bar */}
       <View style={styles.searchBarWrap}>
         <View style={styles.searchBar}>
-          <MaterialCommunityIcons
-            name="magnify"
-            size={20}
+          <Search
+            size={19}
             color={colors.textSecondary}
+            strokeWidth={2.2}
             style={{ marginRight: spacing.sm }}
           />
           <TextInput
@@ -305,11 +307,7 @@ export default function SearchUsersScreen() {
           />
           {search.query.length > 0 ? (
             <Pressable onPress={handleClear} hitSlop={8}>
-              <MaterialCommunityIcons
-                name="close-circle"
-                size={18}
-                color={colors.textMuted}
-              />
+              <CircleX size={17} color={colors.textMuted} strokeWidth={2} />
             </Pressable>
           ) : null}
         </View>
@@ -346,11 +344,7 @@ export default function SearchUsersScreen() {
             ) : (
               <View style={styles.emptyContainer}>
                 <View style={styles.emptyIconWrap}>
-                  <MaterialCommunityIcons
-                    name="account-search-outline"
-                    size={32}
-                    color={colors.primary}
-                  />
+                  <UserRoundSearch size={30} color={colors.textPrimary} strokeWidth={1.8} />
                 </View>
                 <Text style={styles.emptyTitle}>No suggestions yet</Text>
                 <Text style={styles.emptyBody}>
@@ -396,11 +390,7 @@ export default function SearchUsersScreen() {
             ) : search.hasSearched ? (
               <View style={styles.emptyContainer}>
                 <View style={styles.emptyIconWrap}>
-                  <MaterialCommunityIcons
-                    name="magnify-close"
-                    size={32}
-                    color={colors.primary}
-                  />
+                  <SearchX size={30} color={colors.textPrimary} strokeWidth={1.8} />
                 </View>
                 <Text style={styles.emptyTitle}>No results</Text>
                 <Text style={styles.emptyBody}>

@@ -68,7 +68,7 @@ export function Button({
     >
       {loading ? (
         <ActivityIndicator
-          color={variant === "primary" ? colors.white : colors.primary}
+          color={variant === "primary" ? colors.onPrimary : colors.primary}
           size="small"
         />
       ) : (
@@ -85,8 +85,8 @@ function makeStyles(c: ThemeColors) {
   const colors = c;
   return StyleSheet.create({
   base: {
-    height: 52,
-    borderRadius: radius.md,
+    height: 54,
+    borderRadius: radius.pill,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: spacing.lg,
@@ -113,12 +113,10 @@ function makeStyles(c: ThemeColors) {
     backgroundColor: colors.primary,
   },
   primaryLabel: {
-    color: colors.white,
+    color: colors.onPrimary,
   },
   secondary: {
     backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
   },
   secondaryLabel: {
     color: colors.text,

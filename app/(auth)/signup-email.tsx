@@ -2,8 +2,8 @@
 // Wizard step 1 — collect the email and send the first OTP. On success we move
 // to the OTP step; the worker rejects emails that already have an account.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Link, useRouter } from "expo-router";
+import { ArrowLeft } from "lucide-react-native";
 import { useState } from "react";
 import {
   KeyboardAvoidingView,
@@ -62,13 +62,9 @@ export default function SignupEmailScreen() {
           <Pressable
             onPress={() => router.back()}
             hitSlop={10}
-            style={styles.iconBtn}
+            style={styles.backBtn}
           >
-            <MaterialCommunityIcons
-              name="arrow-left"
-              size={24}
-              color={colors.textPrimary}
-            />
+            <ArrowLeft size={21} color={colors.textPrimary} strokeWidth={2.2} />
           </Pressable>
           <StepDots total={3} index={0} />
           <View style={styles.iconBtn} />
@@ -136,17 +132,26 @@ function makeStyles(c: ThemeColors) {
       paddingVertical: spacing.sm,
     },
     iconBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
+    backBtn: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: colors.surface,
+      alignItems: "center",
+      justifyContent: "center",
+    },
     scroll: {
       flexGrow: 1,
-      paddingHorizontal: spacing.xl,
+      paddingHorizontal: spacing.lg,
       paddingTop: spacing.xl,
       paddingBottom: spacing.xl,
     },
     title: {
       fontFamily: fonts.black,
-      fontSize: T.size.xxl,
+      fontSize: T.size.title,
       color: colors.textPrimary,
       letterSpacing: T.tracking.tight,
+      lineHeight: 34,
     },
     subtitle: {
       fontFamily: fonts.regular,

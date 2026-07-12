@@ -1,8 +1,24 @@
 // app/admin/index.tsx
 // Admin dashboard: at-a-glance counts + links into each management section.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useFocusEffect, useRouter } from "expo-router";
+import {
+  Bug,
+  ChevronRight,
+  Database,
+  Download,
+  FileWarning,
+  Flag,
+  Inbox,
+  MessagesSquare,
+  MessageSquareWarning,
+  ShieldUser,
+  Star,
+  UserCheck,
+  Users,
+  UtensilsCrossed,
+  type LucideIcon,
+} from "lucide-react-native";
+import { useFocusEffect, useRouter, type Href } from "expo-router";
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
@@ -30,7 +46,7 @@ import { useThemedStyles } from "@/theme/useThemedStyles";
 interface SectionDef {
   label: string;
   subtitle: string;
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: LucideIcon;
   route:
     | "/admin/restaurants"
     | "/admin/submissions"
@@ -38,6 +54,9 @@ interface SectionDef {
     | "/admin/owners"
     | "/admin/reviews"
     | "/admin/reports"
+    | "/admin/comment-reports"
+    | "/admin/post-reports"
+    | "/admin/post-comment-reports"
     | "/admin/bug-reports"
     | "/admin/users"
     | "/admin/spotlight";
@@ -48,58 +67,79 @@ const SECTIONS: SectionDef[] = [
   {
     label: "Restaurants",
     subtitle: "Add, edit, verify, feature, delete",
-    icon: "silverware-fork-knife",
+    icon: UtensilsCrossed,
     route: "/admin/restaurants",
   },
   {
     label: "Submissions",
     subtitle: "Approve user-submitted restaurants",
-    icon: "inbox-arrow-down",
+    icon: Inbox,
     route: "/admin/submissions",
     badge: (s) => s.restaurantsPending,
   },
   {
     label: "Claims",
     subtitle: "Verify restaurant owners",
-    icon: "shield-account-outline",
+    icon: ShieldUser,
     route: "/admin/claims",
     badge: (s) => s.claims,
   },
   {
     label: "Owners",
     subtitle: "Users with claimed restaurants",
-    icon: "account-check-outline",
+    icon: UserCheck,
     route: "/admin/owners",
   },
   {
     label: "Reviews & comments",
     subtitle: "Moderate and remove content",
-    icon: "comment-text-multiple-outline",
+    icon: MessagesSquare,
     route: "/admin/reviews",
   },
   {
     label: "Reports",
     subtitle: "Handle reported reviews",
-    icon: "flag-outline",
+    icon: Flag,
     route: "/admin/reports",
     badge: (s) => s.reports,
   },
   {
+    label: "Comment reports",
+    subtitle: "Handle reported comments",
+    icon: MessageSquareWarning,
+    route: "/admin/comment-reports",
+    badge: (s) => s.commentReports,
+  },
+  {
+    label: "Post reports",
+    subtitle: "Handle reported community posts",
+    icon: FileWarning,
+    route: "/admin/post-reports",
+    badge: (s) => s.postReports,
+  },
+  {
+    label: "Post comment reports",
+    subtitle: "Handle reported post comments",
+    icon: MessageSquareWarning,
+    route: "/admin/post-comment-reports",
+    badge: (s) => s.postCommentReports,
+  },
+  {
     label: "Bug reports",
     subtitle: "User-reported bugs & suggestions",
-    icon: "bug-outline",
+    icon: Bug,
     route: "/admin/bug-reports",
   },
   {
     label: "Users",
     subtitle: "Browse, search, ban",
-    icon: "account-group-outline",
+    icon: Users,
     route: "/admin/users",
   },
   {
     label: "Featured & Spotlight",
     subtitle: "Featured spots + Spot of the Day",
-    icon: "star-outline",
+    icon: Star,
     route: "/admin/spotlight",
   },
 ];
@@ -184,7 +224,9 @@ export default function AdminDashboard() {
             return (
               <Pressable
                 key={s.route}
-                onPress={() => router.push(s.route)}
+                // Cast: the typed-routes union regenerates on dev-server
+                // start; the freshly-added /admin/post-reports isn't in it yet.
+                onPress={() => router.push(s.route as Href)}
                 style={({ pressed }) => [
                   styles.sectionRow,
                   pressed && styles.sectionRowPressed,
@@ -193,11 +235,7 @@ export default function AdminDashboard() {
                 accessibilityLabel={s.label}
               >
                 <View style={styles.sectionIcon}>
-                  <MaterialCommunityIcons
-                    name={s.icon}
-                    size={22}
-                    color={colors.primary}
-                  />
+                  <s.icon size={20} color={colors.primary} strokeWidth={2} />
                 </View>
                 <View style={styles.sectionText}>
                   <Text style={styles.sectionTitle}>{s.label}</Text>
@@ -210,10 +248,10 @@ export default function AdminDashboard() {
                     <Text style={styles.badgeText}>{count}</Text>
                   </View>
                 ) : null}
-                <MaterialCommunityIcons
-                  name="chevron-right"
-                  size={20}
+                <ChevronRight
+                  size={18}
                   color={colors.textMuted}
+                  strokeWidth={2}
                 />
               </Pressable>
             );
@@ -237,11 +275,7 @@ export default function AdminDashboard() {
               {rebuilding ? (
                 <ActivityIndicator size="small" color={colors.primary} />
               ) : (
-                <MaterialCommunityIcons
-                  name="database-search-outline"
-                  size={22}
-                  color={colors.primary}
-                />
+                <Database size={20} color={colors.primary} strokeWidth={2} />
               )}
             </View>
             <View style={styles.sectionText}>
@@ -263,11 +297,7 @@ export default function AdminDashboard() {
             accessibilityLabel="Bulk import restaurants"
           >
             <View style={styles.sectionIcon}>
-              <MaterialCommunityIcons
-                name="tray-arrow-down"
-                size={22}
-                color={colors.primary}
-              />
+              <Download size={20} color={colors.primary} strokeWidth={2} />
             </View>
             <View style={styles.sectionText}>
               <Text style={styles.sectionTitle}>Bulk import restaurants</Text>
@@ -275,11 +305,7 @@ export default function AdminDashboard() {
                 Seed the catalogue from a JSON list
               </Text>
             </View>
-            <MaterialCommunityIcons
-              name="chevron-right"
-              size={20}
-              color={colors.textMuted}
-            />
+            <ChevronRight size={18} color={colors.textMuted} strokeWidth={2} />
           </Pressable>
         </View>
       </ScrollView>
@@ -401,7 +427,7 @@ function makeStyles(c: ThemeColors) {
   badgeText: {
     fontFamily: fonts.bold,
     fontSize: T.size.xs,
-    color: colors.textInverse,
+    color: colors.onPrimary,
   },
   });
 }

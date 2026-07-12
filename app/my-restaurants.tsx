@@ -3,7 +3,7 @@
 // Uses getOwnedRestaurants(), which ignores the discovery date-filter, so an
 // owner can always reach a LAPSED (hidden) listing here to renew it.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { ArrowLeft, ChevronRight, Store, UtensilsCrossed } from "lucide-react-native";
 import { Image } from "expo-image";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
@@ -18,6 +18,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { PAID_FEATURES_ENABLED } from "@/constants/features";
 import { useAuth } from "@/hooks/useAuth";
 import { listingStatus, type ListingState } from "@/services/listing";
 import { getOwnedRestaurants } from "@/services/restaurants";
@@ -93,9 +94,9 @@ export default function MyRestaurants() {
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >
-          <MaterialCommunityIcons
-            name="arrow-left"
-            size={22}
+          <ArrowLeft
+            size={20}
+            strokeWidth={2.2}
             color={colors.textPrimary}
           />
         </Pressable>
@@ -125,7 +126,11 @@ export default function MyRestaurants() {
             const coverId = item.coverImageId ?? item.imageIds[0] ?? null;
             const thumb = coverId ? getImagePreviewUrl(coverId) : null;
             const location = getLocationLine(item);
-            const pill = statusPill(listingStatus(item).state);
+            // Listing-window status + renewal are paid features — hidden for
+            // the free launch (see constants/features.ts).
+            const pill = PAID_FEATURES_ENABLED
+              ? statusPill(listingStatus(item).state)
+              : null;
             const tint =
               pill?.tone === "ok"
                 ? colors.primary
@@ -133,7 +138,8 @@ export default function MyRestaurants() {
                   ? colors.warning
                   : colors.error;
             const needsRenew =
-              pill?.tone === "warn" || pill?.tone === "bad";
+              PAID_FEATURES_ENABLED &&
+              (pill?.tone === "warn" || pill?.tone === "bad");
             return (
               <Pressable
                 style={({ pressed }) => [
@@ -157,11 +163,7 @@ export default function MyRestaurants() {
                   />
                 ) : (
                   <View style={[styles.thumb, styles.thumbPlaceholder]}>
-                    <MaterialCommunityIcons
-                      name="silverware-fork-knife"
-                      size={20}
-                      color={colors.textMuted}
-                    />
+                    <UtensilsCrossed size={19} color={colors.textMuted} strokeWidth={1.8} />
                   </View>
                 )}
                 <View style={styles.cardText}>
@@ -201,11 +203,7 @@ export default function MyRestaurants() {
                     <Text style={styles.renewText}>Renew</Text>
                   </Pressable>
                 ) : (
-                  <MaterialCommunityIcons
-                    name="chevron-right"
-                    size={20}
-                    color={colors.textMuted}
-                  />
+                  <ChevronRight size={18} color={colors.textMuted} strokeWidth={2} />
                 )}
               </Pressable>
             );
@@ -213,11 +211,7 @@ export default function MyRestaurants() {
           ListEmptyComponent={
             <View style={styles.center}>
               <View style={styles.emptyIconWrap}>
-                <MaterialCommunityIcons
-                  name="storefront-outline"
-                  size={32}
-                  color={colors.primary}
-                />
+                <Store size={30} color={colors.textPrimary} strokeWidth={1.8} />
               </View>
               <Text style={styles.emptyTitle}>No restaurants yet</Text>
               <Text style={styles.emptyBody}>
@@ -319,7 +313,7 @@ function makeStyles(c: ThemeColors) {
     renewText: {
       fontFamily: fonts.bold,
       fontSize: T.size.sm,
-      color: colors.textInverse,
+      color: colors.onPrimary,
     },
     emptyIconWrap: {
       width: 72,

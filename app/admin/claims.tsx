@@ -3,7 +3,7 @@
 // Approve sets the restaurant's ownerId (grants the verified-owner badge +,
 // later, respond-to-reviews / buy-featured). Reject leaves it unowned.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { BadgeCheck, CheckCheck, UtensilsCrossed, X } from "lucide-react-native";
 import { Image } from "expo-image";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
@@ -193,10 +193,10 @@ export default function AdminClaims() {
                     />
                   ) : (
                     <View style={[styles.thumb, styles.thumbPlaceholder]}>
-                      <MaterialCommunityIcons
-                        name="silverware-fork-knife"
-                        size={18}
+                      <UtensilsCrossed
+                        size={17}
                         color={colors.textMuted}
+                        strokeWidth={1.8}
                       />
                     </View>
                   )}
@@ -259,14 +259,14 @@ export default function AdminClaims() {
                     {busy ? (
                       <ActivityIndicator
                         size="small"
-                        color={colors.textInverse}
+                        color={colors.onPrimary}
                       />
                     ) : (
                       <>
-                        <MaterialCommunityIcons
-                          name="check-decagram"
+                        <BadgeCheck
                           size={16}
-                          color={colors.textInverse}
+                          color={colors.onPrimary}
+                          strokeWidth={2}
                         />
                         <Text style={styles.approveText}>Approve</Text>
                       </>
@@ -279,11 +279,7 @@ export default function AdminClaims() {
                     accessibilityRole="button"
                     accessibilityLabel="Reject claim"
                   >
-                    <MaterialCommunityIcons
-                      name="close"
-                      size={16}
-                      color={colors.error}
-                    />
+                    <X size={16} color={colors.error} strokeWidth={2.4} />
                     <Text style={styles.rejectText}>Reject</Text>
                   </Pressable>
                 </View>
@@ -303,9 +299,9 @@ export default function AdminClaims() {
           ListEmptyComponent={
             <View style={styles.center}>
               <View style={styles.emptyIconWrap}>
-                <MaterialCommunityIcons
-                  name="check-all"
-                  size={32}
+                <CheckCheck
+                  size={30}
+                  strokeWidth={1.8}
                   color={colors.primary}
                 />
               </View>
@@ -433,7 +429,7 @@ function makeStyles(c: ThemeColors) {
     approveText: {
       fontFamily: fonts.bold,
       fontSize: T.size.sm,
-      color: colors.textInverse,
+      color: colors.onPrimary,
     },
     rejectBtn: {
       paddingHorizontal: spacing.lg,

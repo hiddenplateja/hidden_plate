@@ -12,17 +12,9 @@
 // count on the button reflects the draft before the user confirms.
 
 import { useEffect, useState } from "react";
-import {
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  View,
-} from "react-native";
+import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 
+import { DraggableSheet } from "@/components/DraggableSheet";
 import {
   fonts,
   radius,
@@ -178,27 +170,17 @@ export function HomeFilterSheet({
     }));
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <Pressable style={s.overlay} onPress={onClose}>
-        {/* Absorb taps so pressing the sheet itself doesn't dismiss it. */}
-        <Pressable style={s.sheet} onPress={() => {}}>
-          <View style={s.handle} />
+    <DraggableSheet visible={visible} onClose={onClose}>
+      <View style={s.titleRow}>
+        <Text style={s.title}>Filters</Text>
+        {activeCount > 0 ? (
+          <Pressable onPress={() => onApply(DEFAULT_FILTERS)} hitSlop={8}>
+            <Text style={s.reset}>Reset</Text>
+          </Pressable>
+        ) : null}
+      </View>
 
-          <View style={s.titleRow}>
-            <Text style={s.title}>Filters</Text>
-            {activeCount > 0 ? (
-              <Pressable onPress={() => onApply(DEFAULT_FILTERS)} hitSlop={8}>
-                <Text style={s.reset}>Reset</Text>
-              </Pressable>
-            ) : null}
-          </View>
-
-          <ScrollView showsVerticalScrollIndicator={false}>
+      <ScrollView showsVerticalScrollIndicator={false}>
             <Text style={s.sectionLabel}>Minimum rating</Text>
             <View style={s.row}>
               {RATING_OPTIONS.map((o) => (
@@ -245,7 +227,7 @@ export function HomeFilterSheet({
               <Switch
                 value={draft.openNow}
                 onValueChange={(v) => setDraft((d) => ({ ...d, openNow: v }))}
-                trackColor={{ false: colors.divider, true: colors.primary }}
+                trackColor={{ false: colors.divider, true: colors.switchTrack }}
                 thumbColor={colors.white}
               />
             </View>
@@ -262,7 +244,7 @@ export function HomeFilterSheet({
                 onValueChange={(v) =>
                   setDraft((d) => ({ ...d, verifiedOnly: v }))
                 }
-                trackColor={{ false: colors.divider, true: colors.primary }}
+                trackColor={{ false: colors.divider, true: colors.switchTrack }}
                 thumbColor={colors.white}
               />
             </View>
@@ -279,37 +261,13 @@ export function HomeFilterSheet({
                 : `Show ${count} ${count === 1 ? "place" : "places"}`}
             </Text>
           </Pressable>
-        </Pressable>
-      </Pressable>
-    </Modal>
+    </DraggableSheet>
   );
 }
 
 function makeSheetStyles(c: ThemeColors) {
   const colors = c;
   return StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
-    justifyContent: "flex-end",
-  },
-  sheet: {
-    backgroundColor: colors.cardBackground,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.md,
-    paddingBottom: Platform.OS === "ios" ? 40 : spacing.xl,
-    maxHeight: "85%",
-  },
-  handle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.divider,
-    alignSelf: "center",
-    marginBottom: spacing.lg,
-  },
   titleRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -374,7 +332,7 @@ function makeSheetStyles(c: ThemeColors) {
   applyText: {
     fontFamily: fonts.bold,
     fontSize: T.size.base,
-    color: colors.textInverse,
+    color: colors.onPrimary,
   },
   });
 }
@@ -401,7 +359,7 @@ function makeChipStyles(c: ThemeColors) {
   },
   labelActive: {
     fontFamily: fonts.bold,
-    color: colors.textInverse,
+    color: colors.onPrimary,
   },
   });
 }

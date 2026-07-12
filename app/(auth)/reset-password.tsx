@@ -4,8 +4,8 @@
 // and sets the password with its admin key in one atomic call. On success we
 // bounce back to login so they can sign in with the new password.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { ArrowLeft } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -25,6 +25,7 @@ import { requestPasswordReset, resetPassword } from "@/services/auth";
 import { fonts, radius, spacing, typographyTokens as T } from "@/theme/colors";
 import type { ThemeColors } from "@/theme/themes";
 import { useThemedStyles } from "@/theme/useThemedStyles";
+import { PASSWORD_MIN_LENGTH, validateNewPassword } from "@/utils/passwordPolicy";
 
 const RESEND_COOLDOWN = 30;
 
@@ -70,7 +71,10 @@ export default function ResetPasswordScreen() {
     }
     const next: FieldErrors = {};
     if (!password) next.password = "Password is required";
-    else if (password.length < 8) next.password = "At least 8 characters";
+    else {
+      const pwError = validateNewPassword(password);
+      if (pwError) next.password = pwError;
+    }
 
     if (!confirmPassword) next.confirmPassword = "Please re-enter your password";
     else if (password && confirmPassword !== password)
@@ -129,13 +133,9 @@ export default function ResetPasswordScreen() {
         <Pressable
           onPress={() => router.back()}
           hitSlop={10}
-          style={styles.iconBtn}
+          style={styles.backBtn}
         >
-          <MaterialCommunityIcons
-            name="arrow-left"
-            size={24}
-            color={colors.textPrimary}
-          />
+          <ArrowLeft size={21} color={colors.textPrimary} strokeWidth={2.2} />
         </Pressable>
         <StepDots total={2} index={1} />
         <View style={styles.iconBtn} />
@@ -196,7 +196,7 @@ export default function ResetPasswordScreen() {
             clearError("password");
             clearError("confirmPassword");
           }}
-          placeholder="At least 8 characters"
+          placeholder={`At least ${PASSWORD_MIN_LENGTH} characters`}
           secureTextEntry
           autoCapitalize="none"
           autoComplete="password-new"
@@ -256,18 +256,27 @@ function makeStyles(c: ThemeColors) {
       alignItems: "center",
       justifyContent: "center",
     },
+    backBtn: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: colors.surface,
+      alignItems: "center",
+      justifyContent: "center",
+    },
     scroll: {
       flexGrow: 1,
-      paddingHorizontal: spacing.xl,
+      paddingHorizontal: spacing.lg,
       paddingTop: spacing.lg,
       paddingBottom: spacing.xl,
     },
     title: {
       fontFamily: fonts.black,
-      fontSize: T.size.xxl,
+      fontSize: T.size.title,
       color: colors.textPrimary,
       letterSpacing: T.tracking.tight,
       textAlign: "center",
+      lineHeight: 34,
     },
     subtitle: {
       fontFamily: fonts.regular,
@@ -284,12 +293,12 @@ function makeStyles(c: ThemeColors) {
       height: 64,
       borderRadius: radius.lg,
       borderWidth: 1.5,
-      borderColor: colors.border,
-      backgroundColor: colors.pageBackground,
+      borderColor: "transparent",
+      backgroundColor: colors.surface,
       textAlign: "center",
       fontFamily: fonts.black,
       fontSize: 30,
-      letterSpacing: 10,
+      letterSpacing: 12,
       color: colors.textPrimary,
     },
     codeInputError: {

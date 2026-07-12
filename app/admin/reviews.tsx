@@ -2,7 +2,7 @@
 // Admin: recent reviews. Tap to open the thread (read + remove comments);
 // delete a review outright with the trash action.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Trash2 } from "lucide-react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import {
@@ -167,11 +167,7 @@ export default function AdminReviews() {
                   accessibilityRole="button"
                   accessibilityLabel="Delete review"
                 >
-                  <MaterialCommunityIcons
-                    name="trash-can-outline"
-                    size={20}
-                    color={colors.error}
-                  />
+                  <Trash2 size={19} color={colors.error} strokeWidth={2} />
                 </Pressable>
               </Pressable>
             );

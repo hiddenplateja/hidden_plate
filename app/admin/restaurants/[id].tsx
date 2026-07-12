@@ -1,7 +1,7 @@
 // app/admin/restaurants/[id].tsx
 // Admin: edit a restaurant (all fields + flags) or delete it.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Trash2 } from "lucide-react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -107,11 +107,7 @@ export default function AdminEditRestaurant() {
             accessibilityRole="button"
             accessibilityLabel="Delete restaurant"
           >
-            <MaterialCommunityIcons
-              name="trash-can-outline"
-              size={22}
-              color={colors.error}
-            />
+            <Trash2 size={20} color={colors.error} strokeWidth={2} />
           </Pressable>
         }
       />

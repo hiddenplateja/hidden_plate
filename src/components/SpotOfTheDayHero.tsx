@@ -11,8 +11,8 @@
 // Purely presentational: which restaurant + thumbnail are shown is resolved
 // upstream by services/spotOfTheDay. Tapping anywhere opens the restaurant.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
+import { ArrowRight, Sparkles, Star, UtensilsCrossed } from "lucide-react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { memo, useCallback } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -119,11 +119,7 @@ export const SpotOfTheDayHero = memo(function SpotOfTheDayHero({
         <View style={styles.row}>
           <View style={styles.content}>
             <View style={styles.pill}>
-              <MaterialCommunityIcons
-                name="star-four-points"
-                size={11}
-                color={PILL_INK}
-              />
+              <Sparkles size={11} color={PILL_INK} strokeWidth={2} />
               <Text style={styles.pillText}>SPOT OF THE DAY</Text>
             </View>
 
@@ -140,19 +136,11 @@ export const SpotOfTheDayHero = memo(function SpotOfTheDayHero({
             <View style={styles.bottomRow}>
               <View style={styles.cta}>
                 <Text style={styles.ctaText}>View spot</Text>
-                <MaterialCommunityIcons
-                  name="arrow-right"
-                  size={15}
-                  color={CTA_CORAL}
-                />
+                <ArrowRight size={15} color={CTA_CORAL} strokeWidth={2.2} />
               </View>
               {hasRating ? (
                 <View style={styles.ratingRow}>
-                  <MaterialCommunityIcons
-                    name="star"
-                    size={15}
-                    color="#FFD54A"
-                  />
+                  <Star size={14} color="#FFD54A" fill="#FFD54A" />
                   <Text style={styles.ratingText}>
                     {restaurant.averageRating.toFixed(1)}
                   </Text>
@@ -173,10 +161,10 @@ export const SpotOfTheDayHero = memo(function SpotOfTheDayHero({
               />
             ) : (
               <View style={[styles.thumbImage, styles.thumbPlaceholder]}>
-                <MaterialCommunityIcons
-                  name="silverware-fork-knife"
-                  size={28}
+                <UtensilsCrossed
+                  size={26}
                   color="rgba(255,255,255,0.9)"
+                  strokeWidth={1.8}
                 />
               </View>
             )}

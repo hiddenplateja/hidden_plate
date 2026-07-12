@@ -1,8 +1,8 @@
 // src/components/admin/AdminHeader.tsx
 // Shared header for admin screens: back arrow + title + optional right slot.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { ArrowLeft } from "lucide-react-native";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { fonts, radius, spacing, typographyTokens as T } from "@/theme/colors";
@@ -27,11 +27,7 @@ export function AdminHeader({
         accessibilityRole="button"
         accessibilityLabel="Back"
       >
-        <MaterialCommunityIcons
-          name="arrow-left"
-          size={22}
-          color={colors.textPrimary}
-        />
+        <ArrowLeft size={20} color={colors.textPrimary} strokeWidth={2.2} />
       </Pressable>
       <Text style={styles.title} numberOfLines={1}>
         {title}

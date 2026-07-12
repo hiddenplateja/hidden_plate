@@ -4,7 +4,15 @@
 // each restaurant's listing status (active / expiring / hidden). Tap a
 // restaurant to open its admin edit screen, tap the owner to view their profile.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import {
+  BadgeCheck,
+  ChevronRight,
+  CircleAlert,
+  Mail,
+  Phone,
+  UserCheck,
+  UtensilsCrossed,
+} from "lucide-react-native";
 import { Image } from "expo-image";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
@@ -183,11 +191,7 @@ export default function AdminOwners() {
                     {item.restaurants.length === 1 ? "restaurant" : "restaurants"}
                   </Text>
                 </View>
-                <MaterialCommunityIcons
-                  name="check-decagram"
-                  size={18}
-                  color={colors.primary}
-                />
+                <BadgeCheck size={18} color={colors.primary} strokeWidth={2} />
               </Pressable>
 
               {/* Contact (from their approved claim) */}
@@ -202,11 +206,7 @@ export default function AdminOwners() {
                     style={styles.contactChip}
                     accessibilityRole="button"
                   >
-                    <MaterialCommunityIcons
-                      name="phone-outline"
-                      size={13}
-                      color={colors.primary}
-                    />
+                    <Phone size={13} color={colors.primary} strokeWidth={2} />
                     <Text style={styles.contactText} numberOfLines={1}>
                       {item.claim.contactPhone}
                     </Text>
@@ -220,11 +220,7 @@ export default function AdminOwners() {
                     style={styles.contactChip}
                     accessibilityRole="button"
                   >
-                    <MaterialCommunityIcons
-                      name="email-outline"
-                      size={13}
-                      color={colors.primary}
-                    />
+                    <Mail size={13} color={colors.primary} strokeWidth={2} />
                     <Text style={styles.contactText} numberOfLines={1}>
                       {item.claim.contactEmail}
                     </Text>
@@ -269,10 +265,10 @@ export default function AdminOwners() {
                         />
                       ) : (
                         <View style={[styles.thumb, styles.thumbPlaceholder]}>
-                          <MaterialCommunityIcons
-                            name="silverware-fork-knife"
+                          <UtensilsCrossed
                             size={16}
                             color={colors.textMuted}
+                            strokeWidth={1.8}
                           />
                         </View>
                       )}
@@ -293,10 +289,10 @@ export default function AdminOwners() {
                           </Text>
                         </View>
                       ) : null}
-                      <MaterialCommunityIcons
-                        name="chevron-right"
-                        size={18}
+                      <ChevronRight
+                        size={17}
                         color={colors.textMuted}
+                        strokeWidth={2}
                       />
                     </Pressable>
                   );
@@ -307,11 +303,11 @@ export default function AdminOwners() {
           ListEmptyComponent={
             <View style={styles.center}>
               <View style={styles.emptyIconWrap}>
-                <MaterialCommunityIcons
-                  name={error ? "alert-circle-outline" : "account-check-outline"}
-                  size={32}
-                  color={colors.primary}
-                />
+                {error ? (
+                  <CircleAlert size={30} color={colors.primary} strokeWidth={1.8} />
+                ) : (
+                  <UserCheck size={30} color={colors.primary} strokeWidth={1.8} />
+                )}
               </View>
               <Text style={styles.emptyTitle}>
                 {error ? "Couldn't load owners" : "No owners yet"}

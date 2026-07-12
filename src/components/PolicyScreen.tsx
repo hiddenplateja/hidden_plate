@@ -8,7 +8,7 @@
 // surfaces a top warning banner so it's obvious to anyone reviewing the
 // app that the legal copy needs real lawyer-reviewed text before launch.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { ArrowLeft, TriangleAlert } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import { ReactNode } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -54,11 +54,7 @@ export function PolicyScreen({
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >
-          <MaterialCommunityIcons
-            name="arrow-left"
-            size={22}
-            color={colors.textPrimary}
-          />
+          <ArrowLeft size={20} color={colors.textPrimary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.headerTitle}>{title}</Text>
         <View style={{ width: 36 }} />
@@ -70,11 +66,7 @@ export function PolicyScreen({
       >
         {placeholder ? (
           <View style={styles.placeholderBanner}>
-            <MaterialCommunityIcons
-              name="alert-outline"
-              size={18}
-              color={colors.warning}
-            />
+            <TriangleAlert size={17} color={colors.warning} strokeWidth={2} />
             <Text style={styles.placeholderText}>
               Placeholder text. Replace with lawyer-reviewed content before
               launch.

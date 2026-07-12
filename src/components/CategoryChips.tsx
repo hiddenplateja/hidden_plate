@@ -2,11 +2,19 @@
 // Horizontal row of food-category chips — a round image tile with the label
 // beneath it. Shared by the home feed (app/(tabs)/index.tsx) and the Saved tab
 // so both stay visually identical. Each category maps to a custom full-colour
-// PNG via CATEGORY_ICONS, falling back to a MaterialCommunityIcons glyph when a
-// PNG isn't registered.
+// PNG via CATEGORY_ICONS, falling back to a Lucide icon when a PNG isn't
+// registered.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
+import {
+  CakeSlice,
+  Fish,
+  Flame,
+  Leaf,
+  Sandwich,
+  UtensilsCrossed,
+  type LucideIcon,
+} from "lucide-react-native";
 import type { ReactNode } from "react";
 import {
   FlatList,
@@ -24,12 +32,12 @@ import type { ThemeColors } from "@/theme/themes";
 import { useThemedStyles } from "@/theme/useThemedStyles";
 
 export const CATEGORIES = [
-  { id: "all", label: "All", icon: "silverware-fork-knife" },
-  { id: "jerk", label: "Jerk", icon: "fire" },
-  { id: "seafood", label: "Seafood", icon: "fish" },
-  { id: "patties", label: "Patties", icon: "food" },
-  { id: "ital", label: "Ital", icon: "leaf" },
-  { id: "sweets", label: "Sweets", icon: "cupcake" },
+  { id: "all", label: "All", icon: UtensilsCrossed },
+  { id: "jerk", label: "Jerk", icon: Flame },
+  { id: "seafood", label: "Seafood", icon: Fish },
+  { id: "patties", label: "Patties", icon: Sandwich },
+  { id: "ital", label: "Ital", icon: Leaf },
+  { id: "sweets", label: "Sweets", icon: CakeSlice },
 ] as const;
 
 // Two size presets. "default" = home/Saved; "compact" = the See-all pages,
@@ -44,7 +52,7 @@ const SIZES = {
 export function TileChip({
   label,
   image,
-  icon,
+  icon: Icon = UtensilsCrossed,
   active,
   onPress,
   compact = false,
@@ -52,8 +60,8 @@ export function TileChip({
   label: string;
   /** require()'d PNG (a module id / number). Takes precedence over `icon`. */
   image?: number;
-  /** Glyph fallback, or the icon for non-category chips (e.g. the City filter). */
-  icon?: keyof typeof MaterialCommunityIcons.glyphMap;
+  /** Icon fallback, or the icon for non-category chips (e.g. the City filter). */
+  icon?: LucideIcon;
   active: boolean;
   onPress: () => void;
   /** Smaller variant for the See-all pages. */
@@ -77,10 +85,10 @@ export function TileChip({
             contentFit="contain"
           />
         ) : (
-          <MaterialCommunityIcons
-            name={icon ?? "silverware-fork-knife"}
-            size={s.glyph}
+          <Icon
+            size={s.glyph - 4}
             color={active ? colors.primary : colors.textMuted}
+            strokeWidth={active ? 2.2 : 2}
           />
         )}
       </View>

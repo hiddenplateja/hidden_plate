@@ -3,7 +3,7 @@
 // signup landing so the two stay visually identical. Handlers are supplied by
 // the caller — real OAuth on login, a "coming soon" notice on signup for now.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { Platform, StyleSheet, View } from "react-native";
 
 import { GoogleLogo } from "@/components/icons/GoogleLogo";
@@ -39,11 +39,7 @@ export function SocialAuthButtons({
           loading={busy === "apple"}
           disabled={disabled || (anyBusy && busy !== "apple")}
           leftIcon={
-            <MaterialCommunityIcons
-              name="apple"
-              size={20}
-              color={colors.textPrimary}
-            />
+            <Ionicons name="logo-apple" size={20} color={colors.textPrimary} />
           }
           style={styles.btn}
         />

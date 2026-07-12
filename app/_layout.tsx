@@ -171,6 +171,11 @@ function RootNavigator() {
       <Stack.Screen name="(auth)" />
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="onboarding" />
+      {/* Composer slides up like a modal (X-style). */}
+      <Stack.Screen
+        name="compose-post"
+        options={{ presentation: "modal", animation: "slide_from_bottom" }}
+      />
     </Stack>
   );
 }

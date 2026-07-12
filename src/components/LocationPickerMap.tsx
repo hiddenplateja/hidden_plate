@@ -11,7 +11,7 @@
 // web bundling (which has no native map) doesn't break — we render a notice
 // there instead.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Map, Pointer } from "lucide-react-native";
 import { useEffect, useRef } from "react";
 import { Platform, StyleSheet, Text, View } from "react-native";
 
@@ -75,11 +75,7 @@ export function LocationPickerMap({
   if (Platform.OS === "web" || !MapView) {
     return (
       <View style={[styles.fallback, { height }]}>
-        <MaterialCommunityIcons
-          name="map-outline"
-          size={28}
-          color={colors.textMuted}
-        />
+        <Map size={26} color={colors.textMuted} strokeWidth={1.8} />
         <Text style={styles.fallbackText}>
           The map picker isn&apos;t available on web. Open the app on your phone
           to drop a pin.
@@ -114,11 +110,7 @@ export function LocationPickerMap({
 
       {!value ? (
         <View pointerEvents="none" style={styles.hint}>
-          <MaterialCommunityIcons
-            name="gesture-tap"
-            size={16}
-            color="#FFFFFF"
-          />
+          <Pointer size={15} color="#FFFFFF" strokeWidth={2} />
           <Text style={styles.hintText}>Tap the map to drop a pin</Text>
         </View>
       ) : null}

@@ -5,7 +5,7 @@
 // receives onChange. Used by RestaurantForm. Empty rows are harmless — the
 // service cleans the menu (drops blank items/sections) on save.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { CirclePlus, Plus, Trash2, X } from "lucide-react-native";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { fonts, radius, spacing, typographyTokens as T } from "@/theme/colors";
@@ -71,11 +71,7 @@ export function MenuEditor({ value, onChange, disabled }: MenuEditorProps) {
               accessibilityLabel="Remove section"
               disabled={disabled}
             >
-              <MaterialCommunityIcons
-                name="trash-can-outline"
-                size={20}
-                color={colors.error}
-              />
+              <Trash2 size={19} color={colors.error} strokeWidth={2} />
             </Pressable>
           </View>
 
@@ -98,11 +94,7 @@ export function MenuEditor({ value, onChange, disabled }: MenuEditorProps) {
                 accessibilityLabel="Remove item"
                 disabled={disabled}
               >
-                <MaterialCommunityIcons
-                  name="close"
-                  size={18}
-                  color={colors.textMuted}
-                />
+                <X size={17} color={colors.textMuted} strokeWidth={2} />
               </Pressable>
             </View>
           ))}
@@ -113,11 +105,7 @@ export function MenuEditor({ value, onChange, disabled }: MenuEditorProps) {
             disabled={disabled}
             accessibilityRole="button"
           >
-            <MaterialCommunityIcons
-              name="plus"
-              size={16}
-              color={colors.primary}
-            />
+            <Plus size={15} color={colors.primary} strokeWidth={2.2} />
             <Text style={styles.addItemText}>Add item</Text>
           </Pressable>
         </View>
@@ -129,11 +117,7 @@ export function MenuEditor({ value, onChange, disabled }: MenuEditorProps) {
         disabled={disabled}
         accessibilityRole="button"
       >
-        <MaterialCommunityIcons
-          name="plus-circle-outline"
-          size={18}
-          color={colors.primary}
-        />
+        <CirclePlus size={17} color={colors.primary} strokeWidth={2} />
         <Text style={styles.addSectionText}>
           {value.length === 0 ? "Add a menu section" : "Add another section"}
         </Text>

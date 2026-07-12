@@ -6,7 +6,16 @@
 // admin-managed (owners can't write the restaurant doc), so we point those at
 // "contact an admin".
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import {
+  ArrowLeft,
+  ChevronRight,
+  CircleAlert,
+  ExternalLink,
+  ReceiptText,
+  Star,
+  UtensilsCrossed,
+  type LucideIcon,
+} from "lucide-react-native";
 import { Image } from "expo-image";
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
@@ -20,6 +29,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { PAID_FEATURES_ENABLED } from "@/constants/features";
 import { useAuth } from "@/hooks/useAuth";
 import { listingStatus } from "@/services/listing";
 import { getRestaurantById } from "@/services/restaurants";
@@ -32,7 +42,7 @@ import { useThemedStyles } from "@/theme/useThemedStyles";
 import type { Restaurant } from "@/types/restaurant";
 
 interface Action {
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: LucideIcon;
   label: string;
   sub: string;
   onPress: () => void;
@@ -100,29 +110,35 @@ export default function ManageRestaurantScreen() {
 
   const actions: Action[] = [
     {
-      icon: "silverware-fork-knife",
+      icon: UtensilsCrossed,
       label: "Edit menu",
       sub: "Add sections and dishes",
       onPress: () => router.push(`/restaurant/${id}/edit-menu`),
     },
     {
-      icon: "star-outline",
+      icon: Star,
       label: "Reviews",
       sub: "Read and reply to reviews",
       onPress: () => router.push(`/restaurant/${id}/reviews`),
     },
     {
-      icon: "open-in-new",
+      icon: ExternalLink,
       label: "View public page",
       sub: "See your restaurant as customers do",
       onPress: () => router.push(`/restaurant/${id}`),
     },
-    {
-      icon: "receipt-text-outline",
-      label: "Manage listing",
-      sub: "Renew or check your listing window",
-      onPress: () => router.push(`/listing/${id}`),
-    },
+    // Paid listing renewal — gated off for the free launch (see
+    // constants/features.ts). Ownership + menu/review management stay.
+    ...(PAID_FEATURES_ENABLED
+      ? [
+          {
+            icon: ReceiptText,
+            label: "Manage listing",
+            sub: "Renew or check your listing window",
+            onPress: () => router.push(`/listing/${id}`),
+          } as Action,
+        ]
+      : []),
   ];
 
   return (
@@ -135,11 +151,7 @@ export default function ManageRestaurantScreen() {
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >
-          <MaterialCommunityIcons
-            name="arrow-left"
-            size={22}
-            color={colors.textPrimary}
-          />
+          <ArrowLeft size={20} color={colors.textPrimary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.headerTitle}>Manage</Text>
         <View style={{ width: 36 }} />
@@ -155,11 +167,7 @@ export default function ManageRestaurantScreen() {
             <Image source={{ uri: thumb }} style={styles.thumb} contentFit="cover" />
           ) : (
             <View style={[styles.thumb, styles.thumbPlaceholder]}>
-              <MaterialCommunityIcons
-                name="silverware-fork-knife"
-                size={22}
-                color={colors.textMuted}
-              />
+              <UtensilsCrossed size={20} color={colors.textMuted} strokeWidth={1.8} />
             </View>
           )}
           <View style={styles.idText}>
@@ -168,11 +176,7 @@ export default function ManageRestaurantScreen() {
             </Text>
             {restaurant.isFeatured ? (
               <View style={styles.featuredPill}>
-                <MaterialCommunityIcons
-                  name="star"
-                  size={11}
-                  color={colors.primary}
-                />
+                <Star size={11} color={colors.star} fill={colors.star} />
                 <Text style={styles.featuredText}>Featured</Text>
               </View>
             ) : null}
@@ -189,18 +193,14 @@ export default function ManageRestaurantScreen() {
           <Stat label="Views" value={views == null ? "—" : String(views)} />
         </View>
 
-        {/* Listing warning */}
-        {needsRenew ? (
+        {/* Listing warning — only when paid listings are live. */}
+        {PAID_FEATURES_ENABLED && needsRenew ? (
           <Pressable
             style={styles.banner}
             onPress={() => router.push(`/listing/${id}`)}
             accessibilityRole="button"
           >
-            <MaterialCommunityIcons
-              name="alert-circle-outline"
-              size={18}
-              color={colors.error}
-            />
+            <CircleAlert size={17} color={colors.error} strokeWidth={2} />
             <Text style={styles.bannerText}>
               {listing.state === "lapsed"
                 ? "Your listing has lapsed and is hidden from discovery. Tap to renew."
@@ -228,11 +228,7 @@ export default function ManageRestaurantScreen() {
               accessibilityLabel={a.label}
             >
               <View style={styles.actionIcon}>
-                <MaterialCommunityIcons
-                  name={a.icon}
-                  size={20}
-                  color={colors.primary}
-                />
+                <a.icon size={19} color={colors.primary} strokeWidth={2} />
               </View>
               <View style={styles.actionText}>
                 <Text style={styles.actionLabel}>{a.label}</Text>
@@ -240,11 +236,7 @@ export default function ManageRestaurantScreen() {
                   {a.sub}
                 </Text>
               </View>
-              <MaterialCommunityIcons
-                name="chevron-right"
-                size={20}
-                color={colors.textMuted}
-              />
+              <ChevronRight size={18} color={colors.textMuted} strokeWidth={2} />
             </Pressable>
           ))}
         </View>

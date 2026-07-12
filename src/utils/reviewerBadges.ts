@@ -4,6 +4,16 @@
 // Returns the highest tier earned in each track (volume + parish coverage),
 // plus the NEXT tier the user is working toward (for a progress nudge).
 
+import {
+  Compass,
+  Crown,
+  MapPinCheck,
+  MapPinned,
+  Star,
+  Trophy,
+  type LucideIcon,
+} from "lucide-react-native";
+
 // Color family per badge — lets the UI distinguish tiers at a glance instead of
 // painting every badge the same brand color. Mapped to real colors by the
 // consumer (keeps this module theme-agnostic and pure).
@@ -12,7 +22,7 @@ export type BadgeTone = "gold" | "amber" | "coral" | "teal" | "blue" | "green";
 export interface ReviewerBadge {
   id: string;
   label: string;
-  icon: string; // MaterialCommunityIcons glyph name (consumer casts)
+  icon: LucideIcon; // Lucide icon component (consumer renders directly)
   tone: BadgeTone;
   /** Human-readable threshold, e.g. "25+ reviews" — tells users what it means. */
   requirement: string;
@@ -36,7 +46,7 @@ const REVIEW_TIERS: Tier[] = [
     badge: {
       id: "local-expert",
       label: "Local Expert",
-      icon: "crown",
+      icon: Crown,
       tone: "gold",
       requirement: "25+ reviews",
     },
@@ -46,7 +56,7 @@ const REVIEW_TIERS: Tier[] = [
     badge: {
       id: "top-reviewer",
       label: "Top Reviewer",
-      icon: "trophy",
+      icon: Trophy,
       tone: "amber",
       requirement: "10+ reviews",
     },
@@ -56,7 +66,7 @@ const REVIEW_TIERS: Tier[] = [
     badge: {
       id: "reviewer",
       label: "Reviewer",
-      icon: "star-circle",
+      icon: Star,
       tone: "coral",
       requirement: "1+ reviews",
     },
@@ -70,7 +80,7 @@ const PARISH_TIERS: Tier[] = [
     badge: {
       id: "island-master",
       label: "Island Master",
-      icon: "map-check",
+      icon: MapPinCheck,
       tone: "teal",
       requirement: "All 14 parishes",
     },
@@ -80,7 +90,7 @@ const PARISH_TIERS: Tier[] = [
     badge: {
       id: "island-explorer",
       label: "Island Explorer",
-      icon: "map-marker-multiple",
+      icon: MapPinned,
       tone: "blue",
       requirement: "7+ parishes",
     },
@@ -90,7 +100,7 @@ const PARISH_TIERS: Tier[] = [
     badge: {
       id: "parish-explorer",
       label: "Parish Explorer",
-      icon: "compass-outline",
+      icon: Compass,
       tone: "green",
       requirement: "3+ parishes",
     },

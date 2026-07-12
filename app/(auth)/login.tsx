@@ -274,7 +274,7 @@ function makeStyles(c: ThemeColors) {
     },
     scroll: {
       flexGrow: 1,
-      paddingHorizontal: spacing.xl,
+      paddingHorizontal: spacing.lg,
       paddingTop: spacing.xxl,
       paddingBottom: spacing.xl,
     },
@@ -297,8 +297,6 @@ function makeStyles(c: ThemeColors) {
       fontSize: T.size.sm,
       color: colors.textMuted,
       marginHorizontal: spacing.md,
-      textTransform: "uppercase",
-      letterSpacing: T.tracking.wider,
     },
     forgotRow: {
       alignItems: "flex-end",

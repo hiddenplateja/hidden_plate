@@ -6,7 +6,7 @@
 // the genuine owner's reply ever shows). Renders nothing for an unclaimed
 // restaurant or a non-owner with no reply present.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Reply, Store } from "lucide-react-native";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
 import {
@@ -162,7 +162,7 @@ export function OwnerReviewResponse({
             accessibilityRole="button"
           >
             {busy ? (
-              <ActivityIndicator size="small" color={colors.textInverse} />
+              <ActivityIndicator size="small" color={colors.onPrimary} />
             ) : (
               <Text style={styles.saveText}>
                 {response ? "Save" : "Post reply"}
@@ -179,11 +179,7 @@ export function OwnerReviewResponse({
     return (
       <View style={styles.card}>
         <View style={styles.headerRow}>
-          <MaterialCommunityIcons
-            name="storefront"
-            size={15}
-            color={colors.primary}
-          />
+          <Store size={14} color={colors.primary} strokeWidth={2} />
           <Text style={styles.label}>
             {restaurantName ? `Reply from ${restaurantName}` : "Owner reply"}
           </Text>
@@ -215,11 +211,7 @@ export function OwnerReviewResponse({
         accessibilityRole="button"
         accessibilityLabel="Reply to this review as the owner"
       >
-        <MaterialCommunityIcons
-          name="reply-outline"
-          size={18}
-          color={colors.primary}
-        />
+        <Reply size={17} color={colors.primary} strokeWidth={2} />
         <Text style={styles.replyCtaText}>Reply as the owner</Text>
       </Pressable>
     );
@@ -261,7 +253,7 @@ function makeStyles(c: ThemeColors) {
     ownerBadgeText: {
       fontFamily: fonts.bold,
       fontSize: T.size.xs,
-      color: colors.textInverse,
+      color: colors.onPrimary,
     },
     body: {
       fontFamily: fonts.regular,
@@ -352,7 +344,7 @@ function makeStyles(c: ThemeColors) {
     saveText: {
       fontFamily: fonts.bold,
       fontSize: T.size.sm,
-      color: colors.textInverse,
+      color: colors.onPrimary,
     },
   });
 }

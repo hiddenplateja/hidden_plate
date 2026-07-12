@@ -4,8 +4,8 @@
 // this restaurant; tapping toggles (optimistic). "+ New collection" routes to
 // the create screen seeded with this restaurant.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { Circle, CircleCheck, CirclePlus, Globe, Lock } from "lucide-react-native";
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -135,11 +135,11 @@ export function AddToListSheet({
                     accessibilityRole="button"
                     accessibilityState={{ selected: has }}
                   >
-                    <MaterialCommunityIcons
-                      name={list.isPublic ? "earth" : "lock"}
-                      size={16}
-                      color={colors.textMuted}
-                    />
+                    {list.isPublic ? (
+                      <Globe size={15} color={colors.textMuted} strokeWidth={2} />
+                    ) : (
+                      <Lock size={15} color={colors.textMuted} strokeWidth={2} />
+                    )}
                     <View style={styles.rowText}>
                       <Text style={styles.rowTitle} numberOfLines={1}>
                         {list.title}
@@ -151,12 +151,14 @@ export function AddToListSheet({
                     </View>
                     {busyId === list.id ? (
                       <ActivityIndicator size="small" color={colors.primary} />
-                    ) : (
-                      <MaterialCommunityIcons
-                        name={has ? "check-circle" : "checkbox-blank-circle-outline"}
-                        size={24}
-                        color={has ? colors.primary : colors.border}
+                    ) : has ? (
+                      <CircleCheck
+                        size={22}
+                        color={colors.primary}
+                        strokeWidth={2}
                       />
+                    ) : (
+                      <Circle size={22} color={colors.border} strokeWidth={2} />
                     )}
                   </Pressable>
                 );
@@ -173,11 +175,7 @@ export function AddToListSheet({
             onPress={createNew}
             accessibilityRole="button"
           >
-            <MaterialCommunityIcons
-              name="plus-circle-outline"
-              size={22}
-              color={colors.primary}
-            />
+            <CirclePlus size={21} color={colors.primary} strokeWidth={2} />
             <Text style={styles.newText}>New collection</Text>
           </Pressable>
         </Pressable>

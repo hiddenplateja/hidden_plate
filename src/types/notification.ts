@@ -33,8 +33,10 @@ export interface AppNotification {
  * consumers should narrow based on `notification.type` before reading.
  */
 export interface NotificationData {
-  /** For like + comment notifications */
+  /** For like + comment notifications on a review */
   reviewId?: string;
+  /** For like + comment notifications on a community post */
+  postId?: string;
   /** For new_restaurant notifications */
   restaurantId?: string;
   /** Convenience: the actor's display name, used in the notification body */

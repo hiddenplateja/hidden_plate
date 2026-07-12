@@ -49,6 +49,18 @@ interface AppwriteConfig {
     restaurantMenus: string;
     /** Optional app-control doc (maintenance + version gate). "" = gate off. */
     acontrol: string;
+    /** Optional reports on review comments. "" = comment reporting off. */
+    commentReports: string;
+    /** Optional community text posts (non-review). "" = posting off. */
+    posts: string;
+    /** Optional likes on community posts. "" = post likes off. */
+    postLikes: string;
+    /** Optional comments on community posts. "" = post comments off. */
+    postComments: string;
+    /** Optional reports on community posts. "" = post reporting off. */
+    postReports: string;
+    /** Optional reports on community post comments. "" = off. */
+    postCommentReports: string;
   };
   buckets: {
     media: string;
@@ -144,6 +156,31 @@ export const appwriteConfig: AppwriteConfig = {
     ),
     // Optional — maintenance + version gate. The app stays ungated when unset.
     acontrol: optionalEnv("EXPO_PUBLIC_APPWRITE_ACONTROL_COLLECTION_ID", ""),
+    // Optional — reports on review comments. Comment reporting no-ops when unset.
+    commentReports: optionalEnv(
+      "EXPO_PUBLIC_APPWRITE_COMMENT_REPORTS_COLLECTION_ID",
+      "",
+    ),
+    // Optional — community text posts. The compose FAB + feed merge no-op
+    // gracefully when unset.
+    posts: optionalEnv("EXPO_PUBLIC_APPWRITE_POSTS_COLLECTION_ID", ""),
+    // Optional — likes on community posts. The like button no-ops when unset.
+    postLikes: optionalEnv("EXPO_PUBLIC_APPWRITE_POST_LIKES_COLLECTION_ID", ""),
+    // Optional — comments on community posts. Commenting no-ops when unset.
+    postComments: optionalEnv(
+      "EXPO_PUBLIC_APPWRITE_POST_COMMENTS_COLLECTION_ID",
+      "",
+    ),
+    // Optional — reports on community posts. Post reporting no-ops when unset.
+    postReports: optionalEnv(
+      "EXPO_PUBLIC_APPWRITE_POST_REPORTS_COLLECTION_ID",
+      "",
+    ),
+    // Optional — reports on community post comments. No-ops when unset.
+    postCommentReports: optionalEnv(
+      "EXPO_PUBLIC_APPWRITE_POST_COMMENT_REPORTS_COLLECTION_ID",
+      "",
+    ),
   },
   buckets: {
     media: requireEnv("EXPO_PUBLIC_APPWRITE_MEDIA_BUCKET_ID"),

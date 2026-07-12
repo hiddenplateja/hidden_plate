@@ -2,7 +2,7 @@
 // Admin: queue of user-submitted restaurants awaiting approval (isActive=false).
 // Approve publishes them; Edit opens the full editor; Reject deletes.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Check, CheckCheck, Pencil, UtensilsCrossed, X } from "lucide-react-native";
 import { Image } from "expo-image";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
@@ -174,10 +174,10 @@ export default function AdminSubmissions() {
                     />
                   ) : (
                     <View style={[styles.thumb, styles.thumbPlaceholder]}>
-                      <MaterialCommunityIcons
-                        name="silverware-fork-knife"
-                        size={18}
+                      <UtensilsCrossed
+                        size={17}
                         color={colors.textMuted}
+                        strokeWidth={1.8}
                       />
                     </View>
                   )}
@@ -206,13 +206,13 @@ export default function AdminSubmissions() {
                     accessibilityLabel="Approve"
                   >
                     {busy ? (
-                      <ActivityIndicator size="small" color={colors.textInverse} />
+                      <ActivityIndicator size="small" color={colors.onPrimary} />
                     ) : (
                       <>
-                        <MaterialCommunityIcons
-                          name="check"
+                        <Check
                           size={16}
-                          color={colors.textInverse}
+                          color={colors.onPrimary}
+                          strokeWidth={2.5}
                         />
                         <Text style={styles.approveText}>Approve</Text>
                       </>
@@ -230,11 +230,7 @@ export default function AdminSubmissions() {
                     accessibilityRole="button"
                     accessibilityLabel="Edit"
                   >
-                    <MaterialCommunityIcons
-                      name="pencil"
-                      size={16}
-                      color={colors.textPrimary}
-                    />
+                    <Pencil size={15} color={colors.textPrimary} strokeWidth={2} />
                     <Text style={styles.editText}>Edit</Text>
                   </Pressable>
                   <Pressable
@@ -244,11 +240,7 @@ export default function AdminSubmissions() {
                     accessibilityRole="button"
                     accessibilityLabel="Reject"
                   >
-                    <MaterialCommunityIcons
-                      name="close"
-                      size={16}
-                      color={colors.error}
-                    />
+                    <X size={16} color={colors.error} strokeWidth={2.4} />
                   </Pressable>
                 </View>
               </View>
@@ -267,11 +259,7 @@ export default function AdminSubmissions() {
           ListEmptyComponent={
             <View style={styles.center}>
               <View style={styles.emptyIconWrap}>
-                <MaterialCommunityIcons
-                  name="check-all"
-                  size={32}
-                  color={colors.primary}
-                />
+                <CheckCheck size={30} color={colors.primary} strokeWidth={1.8} />
               </View>
               <Text style={styles.emptyTitle}>All caught up</Text>
               <Text style={styles.emptyBody}>No submissions to review.</Text>
@@ -342,7 +330,7 @@ function makeStyles(c: ThemeColors) {
   approveText: {
     fontFamily: fonts.bold,
     fontSize: T.size.sm,
-    color: colors.textInverse,
+    color: colors.onPrimary,
   },
   editBtn: {
     flex: 1,

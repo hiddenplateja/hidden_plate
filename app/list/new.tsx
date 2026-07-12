@@ -2,7 +2,7 @@
 // Create a new Collection. Accepts an optional ?restaurantId= to seed the
 // first spot (used by the "Add to collection → New collection" flow).
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { ArrowLeft } from "lucide-react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
@@ -58,11 +58,7 @@ export default function NewListScreen() {
             hitSlop={10}
             style={styles.backBtn}
           >
-            <MaterialCommunityIcons
-              name="arrow-left"
-              size={24}
-              color={colors.textPrimary}
-            />
+            <ArrowLeft size={22} color={colors.textPrimary} strokeWidth={2.2} />
           </Pressable>
           <Text style={styles.topTitle}>New collection</Text>
           <View style={styles.backBtn} />

@@ -21,10 +21,12 @@
 //     - Wildly creative spellings ("dee oh tee", spelled-out TLDs)
 //
 //   IMPORTANT — this is a UX / soft-spam filter, NOT a security boundary.
-//   It runs in the client app, which a modified build can bypass. There is no
-//   server-side Appwrite Function re-running this check; the only true
-//   server-side enforcement is the reviews collection's attribute constraints
-//   (rating min/max, comment max-length) configured in the Appwrite console.
+//   It runs in the client app, which a modified build can bypass. On the
+//   review EDIT path the send-notification Function re-runs a link check
+//   server-side (edits are applied there, not by the client). Review CREATE
+//   still writes directly from the client, so its only server-side backstop is
+//   the reviews collection's attribute constraints (rating min/max, comment
+//   max-length) configured in the Appwrite console.
 
 // URL regex captures three shapes against the *normalized* string:
 //   1. (https?|ftp)://...               → explicit protocol

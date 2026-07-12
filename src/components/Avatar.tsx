@@ -12,8 +12,10 @@
 // across renders (one user always has the same fallback color).
 
 import { Image } from "expo-image";
-import { StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { PhotoViewer } from "@/components/PhotoViewer";
 import { getAvatarUrl } from "@/services/storage";
 import { fonts } from "@/theme/colors";
 import type { ThemeColors } from "@/theme/themes";
@@ -24,6 +26,8 @@ interface AvatarProps {
   displayName: string;
   userId: string;
   size?: number;
+  /** Tap to open the photo fullscreen (only when there's an uploaded image). */
+  viewable?: boolean;
 }
 
 // Palette for the fallback circle. Deliberately muted — these are background
@@ -59,8 +63,10 @@ export function Avatar({
   displayName,
   userId,
   size = 40,
+  viewable = false,
 }: AvatarProps) {
   const { styles } = useThemedStyles(makeStyles);
+  const [open, setOpen] = useState(false);
   const url = getAvatarUrl(fileId);
   const dimensionStyle = {
     width: size,
@@ -69,7 +75,7 @@ export function Avatar({
   };
 
   if (url) {
-    return (
+    const img = (
       <Image
         source={{ uri: url }}
         style={[styles.image, dimensionStyle]}
@@ -77,6 +83,23 @@ export function Avatar({
         transition={150}
         cachePolicy="memory-disk"
       />
+    );
+    if (!viewable) return img;
+    return (
+      <>
+        <Pressable
+          onPress={() => setOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel={`View ${displayName}'s photo`}
+        >
+          {img}
+        </Pressable>
+        <PhotoViewer
+          photos={[url]}
+          index={open ? 0 : null}
+          onClose={() => setOpen(false)}
+        />
+      </>
     );
   }
 

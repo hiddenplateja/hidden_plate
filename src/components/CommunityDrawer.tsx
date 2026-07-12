@@ -6,7 +6,7 @@
 // Slides in from the LEFT via reanimated's SlideInLeft. The backdrop dims via
 // the Modal's fade. Tap the dimmed area (or an item) to close.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { ChevronRight, Crown, type LucideIcon } from "lucide-react-native";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, { SlideInLeft } from "react-native-reanimated";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -24,7 +24,7 @@ import { useThemedStyles } from "@/theme/useThemedStyles";
 import type { User } from "@/types/user";
 
 export interface DrawerNavItem {
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: LucideIcon;
   label: string;
   onPress: () => void;
   danger?: boolean;
@@ -102,10 +102,10 @@ export function CommunityDrawer({
                     </Text>
                   ) : null}
                 </View>
-                <MaterialCommunityIcons
-                  name="chevron-right"
-                  size={20}
+                <ChevronRight
+                  size={18}
                   color={colors.textMuted}
+                  strokeWidth={2}
                 />
               </Pressable>
 
@@ -148,11 +148,7 @@ export function CommunityDrawer({
                   accessibilityLabel="Go Premium"
                 >
                   <View style={styles.premiumIcon}>
-                    <MaterialCommunityIcons
-                      name="crown"
-                      size={20}
-                      color={colors.star}
-                    />
+                    <Crown size={19} color={colors.star} strokeWidth={2} />
                   </View>
                   <View style={styles.premiumText}>
                     <Text style={styles.premiumTitle}>Go Premium</Text>
@@ -160,10 +156,10 @@ export function CommunityDrawer({
                       Unlock more features
                     </Text>
                   </View>
-                  <MaterialCommunityIcons
-                    name="chevron-right"
-                    size={20}
+                  <ChevronRight
+                    size={18}
                     color={colors.star}
+                    strokeWidth={2}
                   />
                 </Pressable>
               ) : null}
@@ -191,6 +187,7 @@ export function CommunityDrawer({
 
 function DrawerItem({ item }: { item: DrawerNavItem }) {
   const { styles, colors } = useThemedStyles(makeStyles);
+  const Icon = item.icon;
   return (
     <Pressable
       onPress={item.onPress}
@@ -200,21 +197,17 @@ function DrawerItem({ item }: { item: DrawerNavItem }) {
       accessibilityLabel={item.label}
     >
       <View style={[styles.iconWrap, item.danger && styles.iconWrapDanger]}>
-        <MaterialCommunityIcons
-          name={item.icon}
-          size={22}
+        <Icon
+          size={20}
           color={item.danger ? colors.error : colors.textPrimary}
+          strokeWidth={2}
         />
       </View>
       <Text style={[styles.itemLabel, item.danger && styles.itemLabelDanger]}>
         {item.label}
       </Text>
       {!item.danger ? (
-        <MaterialCommunityIcons
-          name="chevron-right"
-          size={20}
-          color={colors.textMuted}
-        />
+        <ChevronRight size={18} color={colors.textMuted} strokeWidth={2} />
       ) : null}
     </Pressable>
   );

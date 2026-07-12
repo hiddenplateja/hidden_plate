@@ -3,7 +3,7 @@
 // <name>" card with the provider photo. Tap it to re-authenticate with that
 // provider; swipe it horizontally to forget the saved identity (onDismiss).
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import {
   ActivityIndicator,
@@ -27,7 +27,6 @@ import type { LastOAuth } from "@/services/lastOAuth";
 import {
   fonts,
   radius,
-  shadows,
   spacing,
   typographyTokens as T,
 } from "@/theme/colors";
@@ -129,11 +128,7 @@ export function ContinueAsButton({
           ) : identity.provider === "google" ? (
             <GoogleLogo size={18} />
           ) : (
-            <MaterialCommunityIcons
-              name="apple"
-              size={18}
-              color={colors.textPrimary}
-            />
+            <Ionicons name="logo-apple" size={18} color={colors.textPrimary} />
           )}
         </Pressable>
       </Animated.View>
@@ -150,12 +145,11 @@ function makeStyles(c: ThemeColors) {
       gap: spacing.md,
       paddingVertical: spacing.sm + 2,
       paddingHorizontal: spacing.md,
-      borderRadius: radius.md,
+      borderRadius: radius.lg,
       borderWidth: 1,
       borderColor: colors.border,
       backgroundColor: colors.cardBackground,
       marginBottom: spacing.md,
-      ...shadows.sm,
     },
     pressed: { opacity: 0.7 },
     avatar: {
@@ -172,7 +166,7 @@ function makeStyles(c: ThemeColors) {
     initials: {
       fontFamily: fonts.bold,
       fontSize: T.size.base,
-      color: colors.textInverse,
+      color: colors.onPrimary,
     },
     text: { flex: 1 },
     title: {

@@ -1,10 +1,12 @@
 // app/(auth)/forgot-password.tsx
 // Reset step 1 — collect the email and ask the worker to send a reset code.
 // On success we move to the reset step (code + new password). The worker
-// rejects emails with no account; we surface that inline.
+// returns a neutral success whether or not the address has an account (anti-
+// enumeration), so we always advance to the code step; an unknown email simply
+// never receives a code.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Link, useRouter } from "expo-router";
+import { ArrowLeft, KeyRound } from "lucide-react-native";
 import { useState } from "react";
 import {
   KeyboardAvoidingView,
@@ -66,13 +68,9 @@ export default function ForgotPasswordScreen() {
           <Pressable
             onPress={() => router.back()}
             hitSlop={10}
-            style={styles.iconBtn}
+            style={styles.backBtn}
           >
-            <MaterialCommunityIcons
-              name="arrow-left"
-              size={24}
-              color={colors.textPrimary}
-            />
+            <ArrowLeft size={21} color={colors.textPrimary} strokeWidth={2.2} />
           </Pressable>
           <StepDots total={2} index={0} />
           <View style={styles.iconBtn} />
@@ -84,11 +82,7 @@ export default function ForgotPasswordScreen() {
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.iconWrap}>
-            <MaterialCommunityIcons
-              name="lock-reset"
-              size={34}
-              color={colors.primary}
-            />
+            <KeyRound size={30} color={colors.textPrimary} strokeWidth={1.8} />
           </View>
 
           <Text style={styles.title}>Forgot your password?</Text>
@@ -153,28 +147,37 @@ function makeStyles(c: ThemeColors) {
       alignItems: "center",
       justifyContent: "center",
     },
+    backBtn: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: colors.surface,
+      alignItems: "center",
+      justifyContent: "center",
+    },
     scroll: {
       flexGrow: 1,
-      paddingHorizontal: spacing.xl,
+      paddingHorizontal: spacing.lg,
       paddingTop: spacing.xl,
       paddingBottom: spacing.xl,
       alignItems: "center",
     },
     iconWrap: {
-      width: 76,
-      height: 76,
+      width: 72,
+      height: 72,
       borderRadius: radius.pill,
-      backgroundColor: colors.primaryLight,
+      backgroundColor: colors.surface,
       alignItems: "center",
       justifyContent: "center",
       marginBottom: spacing.lg,
     },
     title: {
       fontFamily: fonts.black,
-      fontSize: T.size.xxl,
+      fontSize: T.size.title,
       color: colors.textPrimary,
       letterSpacing: T.tracking.tight,
       textAlign: "center",
+      lineHeight: 34,
     },
     subtitle: {
       fontFamily: fonts.regular,

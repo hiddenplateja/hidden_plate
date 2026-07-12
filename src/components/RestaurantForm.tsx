@@ -10,7 +10,7 @@
 // success (navigation / confirmation). `admin` reveals Active/Verified/Featured
 // toggles. The screen provides its own header/SafeAreaView around this.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { LocateFixed } from "lucide-react-native";
 import * as Location from "expo-location";
 import { useCallback, useState } from "react";
 import {
@@ -544,11 +544,7 @@ export function RestaurantForm({
             {locating ? (
               <ActivityIndicator size="small" color={colors.primary} />
             ) : (
-              <MaterialCommunityIcons
-                name="crosshairs-gps"
-                size={18}
-                color={colors.primary}
-              />
+              <LocateFixed size={17} color={colors.primary} strokeWidth={2.2} />
             )}
             <Text style={styles.locBtnText}>Use my current location</Text>
           </Pressable>

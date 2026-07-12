@@ -3,8 +3,8 @@
 // The cover comes from the cover restaurant's image; the parent resolves and
 // passes `coverImageId` (it already hydrates the restaurants for the screen).
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
+import { ChevronRight, Globe, Library, Lock } from "lucide-react-native";
 import { memo, useCallback } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
@@ -48,11 +48,7 @@ export const ListCard = memo(function ListCard({
           />
         ) : (
           <View style={[styles.image, styles.placeholder]}>
-            <MaterialCommunityIcons
-              name="format-list-bulleted"
-              size={26}
-              color={colors.border}
-            />
+            <Library size={24} color={colors.border} strokeWidth={1.8} />
           </View>
         )}
       </View>
@@ -62,11 +58,11 @@ export const ListCard = memo(function ListCard({
           {list.title}
         </Text>
         <View style={styles.metaRow}>
-          <MaterialCommunityIcons
-            name={list.isPublic ? "earth" : "lock"}
-            size={12}
-            color={colors.textMuted}
-          />
+          {list.isPublic ? (
+            <Globe size={12} color={colors.textMuted} strokeWidth={2} />
+          ) : (
+            <Lock size={12} color={colors.textMuted} strokeWidth={2} />
+          )}
           <Text style={styles.meta} numberOfLines={1}>
             {count} {count === 1 ? "spot" : "spots"} ·{" "}
             {list.isPublic ? "Public" : "Private"}
@@ -74,11 +70,7 @@ export const ListCard = memo(function ListCard({
         </View>
       </View>
 
-      <MaterialCommunityIcons
-        name="chevron-right"
-        size={20}
-        color={colors.textMuted}
-      />
+      <ChevronRight size={18} color={colors.textMuted} strokeWidth={2} />
     </Pressable>
   );
 });

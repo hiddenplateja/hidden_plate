@@ -3,7 +3,7 @@
 // delete. Each card shows the type, message, reporter, and the auto-captured
 // device/app info so you can reproduce.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Bug, Check } from "lucide-react-native";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
 import {
@@ -145,11 +145,7 @@ export default function AdminBugReports() {
                   </View>
                   {resolved ? (
                     <View style={styles.resolvedPill}>
-                      <MaterialCommunityIcons
-                        name="check"
-                        size={12}
-                        color={colors.success}
-                      />
+                      <Check size={12} strokeWidth={2.5} color={colors.success} />
                       <Text style={styles.resolvedText}>Resolved</Text>
                     </View>
                   ) : null}
@@ -204,11 +200,7 @@ export default function AdminBugReports() {
           ListEmptyComponent={
             <View style={styles.center}>
               <View style={styles.emptyIconWrap}>
-                <MaterialCommunityIcons
-                  name="bug-outline"
-                  size={32}
-                  color={colors.primary}
-                />
+                <Bug size={30} strokeWidth={1.8} color={colors.primary} />
               </View>
               <Text style={styles.emptyTitle}>No bug reports</Text>
               <Text style={styles.emptyBody}>

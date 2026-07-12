@@ -7,7 +7,7 @@
 // permission on the menu doc (granted to the owner at claim approval), so a
 // non-owner who reached this screen still couldn't save.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { ArrowLeft } from "lucide-react-native";
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
@@ -111,11 +111,7 @@ export default function EditMenuScreen() {
             accessibilityRole="button"
             accessibilityLabel="Go back"
           >
-            <MaterialCommunityIcons
-              name="arrow-left"
-              size={22}
-              color={colors.textPrimary}
-            />
+            <ArrowLeft size={20} color={colors.textPrimary} strokeWidth={2.2} />
           </Pressable>
           <Text style={styles.headerTitle}>Edit menu</Text>
           <View style={{ width: 36 }} />

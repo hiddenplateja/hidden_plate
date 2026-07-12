@@ -14,7 +14,24 @@
 //   2. Average of restaurant locations → centered at city-level zoom
 //   3. Fallback to Jamaica region (initialRegion)
 
+// MaterialCommunityIcons is intentionally kept for the map MARKERS only:
+// marker content is snapshotted natively (Android has a history of clipping
+// SVG/complex marker children here), so the font glyphs stay. All regular
+// UI chrome uses Lucide like the rest of the app.
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import {
+  ArrowRight,
+  Globe,
+  LocateFixed,
+  MapPin,
+  MapPinned,
+  MapPinOff,
+  Navigation,
+  Phone,
+  Star,
+  UtensilsCrossed,
+  type LucideIcon,
+} from "lucide-react-native";
 import BottomSheet, { BottomSheetView } from "@gorhom/bottom-sheet";
 import { Image as ExpoImage } from "expo-image";
 import * as Location from "expo-location";
@@ -257,11 +274,11 @@ const markerStyles = StyleSheet.create({
 // Quick-action tile in the bottom sheet (icon + label) — mirrors the detail
 // page's quick actions so the two screens feel of a piece.
 function SheetTile({
-  icon,
+  icon: Icon,
   label,
   onPress,
 }: {
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: LucideIcon;
   label: string;
   onPress: () => void;
 }) {
@@ -273,7 +290,7 @@ function SheetTile({
       accessibilityRole="button"
       accessibilityLabel={label}
     >
-      <MaterialCommunityIcons name={icon} size={20} color={colors.primary} />
+      <Icon size={18} color={colors.primary} strokeWidth={2} />
       <Text style={sheetStyles.tileLabel} numberOfLines={1}>
         {label}
       </Text>
@@ -553,11 +570,7 @@ export default function MapScreen() {
   if (Platform.OS === "web") {
     return (
       <SafeAreaView style={screenStyles.center} edges={["top"]}>
-        <MaterialCommunityIcons
-          name="map-marker-off"
-          size={48}
-          color={colors.textMuted}
-        />
+        <MapPinOff size={44} color={colors.textMuted} strokeWidth={1.8} />
         <Text style={screenStyles.webFallback}>
           Map view is only available in the mobile app
         </Text>
@@ -623,11 +636,7 @@ export default function MapScreen() {
         pointerEvents="box-none"
       >
         <View style={screenStyles.headerPill}>
-          <MaterialCommunityIcons
-            name="map-search"
-            size={18}
-            color={colors.primary}
-          />
+          <MapPinned size={17} color={colors.primary} strokeWidth={2.2} />
           <Text style={screenStyles.headerTitle}>Map View</Text>
           {isLoading ? (
             <ActivityIndicator
@@ -650,11 +659,7 @@ export default function MapScreen() {
           accessibilityRole="button"
           accessibilityLabel="Center map on my location"
         >
-          <MaterialCommunityIcons
-            name="crosshairs-gps"
-            size={22}
-            color={colors.primary}
-          />
+          <LocateFixed size={21} color={colors.primary} strokeWidth={2.2} />
         </Pressable>
       ) : null}
 
@@ -680,10 +685,10 @@ export default function MapScreen() {
                 />
               ) : (
                 <View style={[sheetStyles.image, sheetStyles.imagePlaceholder]}>
-                  <MaterialCommunityIcons
-                    name="silverware-fork-knife"
-                    size={36}
+                  <UtensilsCrossed
+                    size={34}
                     color={colors.border}
+                    strokeWidth={1.8}
                   />
                 </View>
               )}
@@ -696,11 +701,7 @@ export default function MapScreen() {
               <View style={sheetStyles.metaRow}>
                 {selectedRestaurant.reviewCount > 0 ? (
                   <View style={sheetStyles.ratingPill}>
-                    <MaterialCommunityIcons
-                      name="star"
-                      size={13}
-                      color={colors.star}
-                    />
+                    <Star size={12} color={colors.star} fill={colors.star} />
                     <Text style={sheetStyles.ratingValue}>
                       {selectedRestaurant.averageRating.toFixed(1)}
                     </Text>
@@ -731,11 +732,7 @@ export default function MapScreen() {
 
               {selectedRestaurant.address ? (
                 <View style={sheetStyles.infoRow}>
-                  <MaterialCommunityIcons
-                    name="map-marker-outline"
-                    size={16}
-                    color={colors.primary}
-                  />
+                  <MapPin size={15} color={colors.primary} strokeWidth={2} />
                   <Text style={sheetStyles.infoText} numberOfLines={2}>
                     {selectedRestaurant.address}
                     {selParish ? `, ${selParish}` : ""}
@@ -752,7 +749,7 @@ export default function MapScreen() {
               {/* Quick actions */}
               <View style={sheetStyles.quickRow}>
                 <SheetTile
-                  icon="directions"
+                  icon={Navigation}
                   label="Directions"
                   onPress={() =>
                     openDirections(
@@ -764,7 +761,7 @@ export default function MapScreen() {
                 />
                 {selectedRestaurant.phoneNumber ? (
                   <SheetTile
-                    icon="phone"
+                    icon={Phone}
                     label="Call"
                     onPress={() =>
                       Linking.openURL(`tel:${selectedRestaurant.phoneNumber}`)
@@ -773,7 +770,7 @@ export default function MapScreen() {
                 ) : null}
                 {selectedRestaurant.websiteUrl ? (
                   <SheetTile
-                    icon="web"
+                    icon={Globe}
                     label="Website"
                     onPress={() => {
                       const url = selectedRestaurant.websiteUrl ?? "";
@@ -797,10 +794,10 @@ export default function MapScreen() {
                 accessibilityLabel={`View ${selectedRestaurant.name} details`}
               >
                 <Text style={sheetStyles.viewBtnText}>View full details</Text>
-                <MaterialCommunityIcons
-                  name="arrow-right"
-                  size={18}
-                  color={colors.textInverse}
+                <ArrowRight
+                  size={17}
+                  color={colors.onPrimary}
+                  strokeWidth={2.2}
                 />
               </Pressable>
             </Animated.View>
@@ -943,17 +940,15 @@ function makeSheetStyles(c: ThemeColors) {
     color: colors.textMuted,
   },
   newPill: {
-    backgroundColor: colors.surface,
+    backgroundColor: colors.accent,
     borderRadius: radius.full,
     paddingHorizontal: spacing.sm + 2,
     paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: colors.border,
   },
   newPillText: {
     fontFamily: fonts.bold,
     fontSize: T.size.xs,
-    color: colors.textSecondary,
+    color: colors.white,
   },
   metaDot: { color: colors.textMuted, fontSize: T.size.sm },
   metaText: {
@@ -1016,7 +1011,7 @@ function makeSheetStyles(c: ThemeColors) {
   viewBtnText: {
     fontFamily: fonts.bold,
     fontSize: T.size.base,
-    color: colors.textInverse,
+    color: colors.onPrimary,
   },
   });
 }

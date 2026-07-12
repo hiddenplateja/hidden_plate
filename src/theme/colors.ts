@@ -2,34 +2,41 @@
 // Design tokens — single source of truth.
 
 export const colors = {
-  // Brand
-  primary: "#E94B3C",
-  primaryDark: "#C2392C",
-  primaryLight: "#FDECEA",
+  // Brand — ink monochrome (Uber Eats-style): near-black actions on pure white.
+  primary: "#0A0A0A",
+  primaryDark: "#000000",
+  primaryLight: "#F4F4F5", // neutral tint (chips, icon tiles)
+  onPrimary: "#FFFFFF", // text/icons on a primary-filled control
 
   // Neutrals
   background: "#FFFFFF",
-  surface: "#F8F8F8",
-  border: "#E5E5E5",
-  text: "#1A1A1A",
-  textPrimary: "#1A1A1A", // alias for text — matches old codebase
-  textSecondary: "#6B6B6B",
-  textMuted: "#9B9B9B",
+  surface: "#F4F4F5",
+  border: "#E4E4E7",
+  text: "#0A0A0A",
+  textPrimary: "#0A0A0A", // alias for text — matches old codebase
+  textSecondary: "#6B7076",
+  textMuted: "#9A9FA6",
   textInverse: "#FFFFFF", // text on dark surfaces
 
   // Page surfaces (for the gray-page / white-card pattern)
   pageBackground: "#F2F3F5",
   cardBackground: "#FFFFFF",
-  divider: "#E2E4E8",
+  divider: "#E4E4E7",
 
   // Status
   error: "#D92D20",
   errorBg: "#FEF3F2",
-  success: "#039855",
+  success: "#05944F",
+  successBg: "#EAF6EF",
   warning: "#F79009",
+
+  // Controls
+  switchTrack: "#0A0A0A", // Switch "on" track — mid-gray in dark so the white thumb stays visible
 
   // Accents
   star: "#F4A523", // amber for star ratings
+  accent: "#E8443A", // brand red — "NEW"/highlight badges, discovery icons
+  accentDark: "#C9382F", // pressed/active state for accent-filled controls
 
   // Misc
   black: "#000000",
@@ -54,6 +61,7 @@ export const radius = {
   xs: 4,
   sm: 6,
   md: 10,
+  field: 12, // text inputs / form fields
   lg: 16,
   xl: 20,
   pill: 999,
@@ -146,6 +154,7 @@ export const typographyTokens = {
     lg: 17,
     xl: 20,
     xxl: 24,
+    title: 28, // screen titles (auth flow)
     xxxl: 32,
   },
   leading: {

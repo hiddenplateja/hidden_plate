@@ -30,7 +30,17 @@
 //     review block still renders, just with fewer commenters or no
 //     restaurant tag. Comments empty out on failure (Sentry captures it).
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import {
+  ArrowLeft,
+  Ban,
+  CloudOff,
+  Ellipsis,
+  MapPin,
+  MessageCircleQuestion,
+  Send,
+  Star,
+  Trash2,
+} from "lucide-react-native";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -54,7 +64,8 @@ import { ErrorState } from "@/components/ErrorState";
 import { OwnerReviewResponse } from "@/components/OwnerReviewResponse";
 import { Skeleton, SkeletonCircle, SkeletonText } from "@/components/Skeleton";
 import { useAuth } from "@/hooks/useAuth";
-import { getHiddenUserIds } from "@/services/blocks";
+import { blockUser, getHiddenUserIds } from "@/services/blocks";
+import { commentReportsEnabled, reportComment } from "@/services/reports";
 import { getRestaurantById } from "@/services/restaurants";
 import {
   addComment,
@@ -351,6 +362,89 @@ export default function ReviewScreen() {
     [review],
   );
 
+  // ─── Report / block on someone else's comment ───────────────────────────────
+
+  const handleCommentMore = useCallback(
+    (comment: ReviewComment) => {
+      const authorId = comment.userId;
+      const options: {
+        text: string;
+        style?: "cancel" | "destructive";
+        onPress?: () => void;
+      }[] = [];
+
+      if (commentReportsEnabled()) {
+        options.push({
+          text: "Report comment",
+          onPress: async () => {
+            try {
+              await reportComment(
+                comment.id,
+                comment.reviewId,
+                comment.restaurantId,
+              );
+              Alert.alert(
+                "Thanks for reporting",
+                "Our team will review this comment.",
+              );
+            } catch (err) {
+              captureError(err, {
+                screen: "reviewDetail",
+                op: "reportComment",
+                commentId: comment.id,
+              });
+              Alert.alert(
+                "Couldn't report",
+                err instanceof Error ? err.message : "Try again.",
+              );
+            }
+          },
+        });
+      }
+
+      options.push({
+        text: "Block user",
+        style: "destructive",
+        onPress: () => {
+          Alert.alert(
+            "Block this user?",
+            "You won't see their comments or reviews anymore.",
+            [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: "Block",
+                style: "destructive",
+                onPress: async () => {
+                  try {
+                    await blockUser(authorId);
+                    setComments((prev) =>
+                      prev.filter((c) => c.comment.userId !== authorId),
+                    );
+                  } catch (err) {
+                    captureError(err, {
+                      screen: "reviewDetail",
+                      op: "blockUser",
+                      targetId: authorId,
+                    });
+                    Alert.alert(
+                      "Couldn't block",
+                      err instanceof Error ? err.message : "Try again.",
+                    );
+                  }
+                },
+              },
+            ],
+          );
+        },
+      });
+
+      options.push({ text: "Cancel", style: "cancel" });
+
+      Alert.alert("Comment options", undefined, options);
+    },
+    [],
+  );
+
   // ─── Render ────────────────────────────────────────────────────────────────
 
   if (loading) {
@@ -428,7 +522,7 @@ export default function ReviewScreen() {
         <Header onBack={() => router.back()} />
         <ErrorState
           variant="screen"
-          icon="cloud-off-outline"
+          icon={CloudOff}
           title="Couldn't load this review"
           body="Check your connection and try again."
           onRetry={loadAll}
@@ -444,7 +538,7 @@ export default function ReviewScreen() {
         <Header onBack={() => router.back()} />
         <ErrorState
           variant="screen"
-          icon="comment-question-outline"
+          icon={MessageCircleQuestion}
           title="Review not found"
           body="It may have been deleted."
         />
@@ -460,7 +554,7 @@ export default function ReviewScreen() {
         <Header onBack={() => router.back()} />
         <ErrorState
           variant="screen"
-          icon="block-helper"
+          icon={Ban}
           title="This review isn't available"
           body="You can't view content from this account."
         />
@@ -498,6 +592,7 @@ export default function ReviewScreen() {
               item={item}
               currentUserId={user?.id ?? null}
               onDelete={handleDeleteComment}
+              onMore={handleCommentMore}
               onAuthorPress={(userId) => router.push(`/profile/${userId}`)}
             />
           )}
@@ -545,13 +640,9 @@ export default function ReviewScreen() {
             accessibilityLabel="Post comment"
           >
             {sending ? (
-              <ActivityIndicator color={colors.textInverse} size="small" />
+              <ActivityIndicator color={colors.onPrimary} size="small" />
             ) : (
-              <MaterialCommunityIcons
-                name="send"
-                size={18}
-                color={colors.textInverse}
-              />
+              <Send size={17} color={colors.onPrimary} strokeWidth={2} />
             )}
           </Pressable>
         </View>
@@ -573,11 +664,7 @@ function Header({ onBack }: { onBack: () => void }) {
         accessibilityRole="button"
         accessibilityLabel="Back"
       >
-        <MaterialCommunityIcons
-          name="arrow-left"
-          size={22}
-          color={colors.textPrimary}
-        />
+        <ArrowLeft size={20} color={colors.textPrimary} strokeWidth={2.2} />
       </Pressable>
       <Text style={styles.headerTitle}>Review</Text>
       <View style={styles.headerRight} />
@@ -631,11 +718,7 @@ function ReviewPostBlock({
           style={postStyles.restaurantTag}
           onPress={() => router.push(`/restaurant/${restaurant.id}`)}
         >
-          <MaterialCommunityIcons
-            name="map-marker"
-            size={12}
-            color={colors.primary}
-          />
+          <MapPin size={12} color={colors.textSecondary} strokeWidth={2.2} />
           <Text style={postStyles.restaurantTagText} numberOfLines={1}>
             Reviewed{" "}
             <Text style={postStyles.restaurantTagBold}>{restaurant.name}</Text>
@@ -645,11 +728,12 @@ function ReviewPostBlock({
 
       <View style={postStyles.starsRow}>
         {[1, 2, 3, 4, 5].map((i) => (
-          <MaterialCommunityIcons
+          <Star
             key={i}
-            name={i <= review.rating ? "star" : "star-outline"}
-            size={16}
+            size={15}
             color={i <= review.rating ? colors.star : colors.border}
+            fill={i <= review.rating ? colors.star : "transparent"}
+            strokeWidth={2}
           />
         ))}
       </View>
@@ -709,11 +793,13 @@ function CommentRow({
   item,
   currentUserId,
   onDelete,
+  onMore,
   onAuthorPress,
 }: {
   item: CommentWithAuthor;
   currentUserId: string | null;
   onDelete: (c: ReviewComment) => void;
+  onMore: (c: ReviewComment) => void;
   onAuthorPress: (userId: string) => void;
 }) {
   const { comment, author } = item;
@@ -752,13 +838,19 @@ function CommentRow({
               accessibilityRole="button"
               accessibilityLabel="Delete comment"
             >
-              <MaterialCommunityIcons
-                name="trash-can-outline"
-                size={14}
-                color={colors.textMuted}
-              />
+              <Trash2 size={14} color={colors.textMuted} strokeWidth={2} />
             </Pressable>
-          ) : null}
+          ) : (
+            <Pressable
+              onPress={() => onMore(comment)}
+              hitSlop={8}
+              style={commentStyles.deleteBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Comment options"
+            >
+              <Ellipsis size={16} color={colors.textMuted} strokeWidth={2} />
+            </Pressable>
+          )}
         </View>
         <Text style={commentStyles.text}>{comment.text}</Text>
       </View>

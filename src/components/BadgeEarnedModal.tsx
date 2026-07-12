@@ -3,7 +3,6 @@
 // A centered card with the medal popping in (spring) + a light success haptic.
 // Deliberately small and tap-to-continue rather than full-screen confetti.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useEffect } from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
@@ -52,13 +51,7 @@ export function BadgeEarnedModal({ badges, onClose }: BadgeEarnedModalProps) {
                     style={[styles.medalHalo, { backgroundColor: tc + "22" }]}
                   >
                     <View style={[styles.medal, { backgroundColor: tc }]}>
-                      <MaterialCommunityIcons
-                        name={
-                          b.icon as keyof typeof MaterialCommunityIcons.glyphMap
-                        }
-                        size={32}
-                        color={colors.white}
-                      />
+                      <b.icon size={30} color={colors.white} strokeWidth={2} />
                     </View>
                   </Animated.View>
                 );
@@ -183,7 +176,7 @@ function makeStyles(c: ThemeColors) {
     buttonText: {
       fontFamily: fonts.bold,
       fontSize: 16,
-      color: colors.textInverse,
+      color: colors.onPrimary,
     },
   });
 }

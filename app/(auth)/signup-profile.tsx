@@ -6,8 +6,8 @@
 // Keyboard: uses KeyboardAwareScrollView (react-native-keyboard-controller) so
 // the focused field always scrolls above the keyboard on both platforms.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { ArrowLeft, BadgeCheck } from "lucide-react-native";
 import { useRef, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
@@ -20,6 +20,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { fonts, radius, spacing, typographyTokens as T } from "@/theme/colors";
 import type { ThemeColors } from "@/theme/themes";
 import { useThemedStyles } from "@/theme/useThemedStyles";
+import { PASSWORD_MIN_LENGTH, validateNewPassword } from "@/utils/passwordPolicy";
 
 const USERNAME_RE = /^[a-z0-9_]{3,20}$/;
 
@@ -61,7 +62,10 @@ export default function SignupProfileScreen() {
       next.username = "3–20 chars: lowercase letters, numbers, underscore";
 
     if (!password) next.password = "Password is required";
-    else if (password.length < 8) next.password = "At least 8 characters";
+    else {
+      const pwError = validateNewPassword(password);
+      if (pwError) next.password = pwError;
+    }
 
     if (!confirmPassword) next.confirmPassword = "Please re-enter your password";
     else if (password && confirmPassword !== password)
@@ -105,13 +109,9 @@ export default function SignupProfileScreen() {
         <Pressable
           onPress={() => router.back()}
           hitSlop={10}
-          style={styles.iconBtn}
+          style={styles.backBtn}
         >
-          <MaterialCommunityIcons
-            name="arrow-left"
-            size={24}
-            color={colors.textPrimary}
-          />
+          <ArrowLeft size={21} color={colors.textPrimary} strokeWidth={2.2} />
         </Pressable>
         <StepDots total={3} index={2} />
         <View style={styles.iconBtn} />
@@ -125,11 +125,7 @@ export default function SignupProfileScreen() {
         bottomOffset={24}
       >
         <View style={styles.verifiedChip}>
-          <MaterialCommunityIcons
-            name="check-circle"
-            size={18}
-            color={colors.success}
-          />
+          <BadgeCheck size={16} color={colors.success} strokeWidth={2.2} />
           <Text style={styles.verifiedText} numberOfLines={1}>
             {email} verified
           </Text>
@@ -192,7 +188,7 @@ export default function SignupProfileScreen() {
             clearError("password");
             clearError("confirmPassword");
           }}
-          placeholder="At least 8 characters"
+          placeholder={`At least ${PASSWORD_MIN_LENGTH} characters`}
           secureTextEntry
           autoCapitalize="none"
           autoComplete="password-new"
@@ -257,9 +253,17 @@ function makeStyles(c: ThemeColors) {
       alignItems: "center",
       justifyContent: "center",
     },
+    backBtn: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: colors.surface,
+      alignItems: "center",
+      justifyContent: "center",
+    },
     scroll: {
       flexGrow: 1,
-      paddingHorizontal: spacing.xl,
+      paddingHorizontal: spacing.lg,
       paddingTop: spacing.md,
       paddingBottom: spacing.xl,
     },
@@ -268,9 +272,9 @@ function makeStyles(c: ThemeColors) {
       alignItems: "center",
       alignSelf: "flex-start",
       maxWidth: "100%",
-      backgroundColor: colors.primaryLight,
+      backgroundColor: colors.successBg,
       borderRadius: radius.pill,
-      paddingVertical: spacing.xs,
+      paddingVertical: spacing.xs + 2,
       paddingHorizontal: spacing.md,
       marginBottom: spacing.lg,
     },
@@ -278,14 +282,15 @@ function makeStyles(c: ThemeColors) {
       fontFamily: fonts.bold,
       fontSize: T.size.sm,
       color: colors.success,
-      marginLeft: spacing.xs,
+      marginLeft: spacing.xs + 2,
       flexShrink: 1,
     },
     title: {
       fontFamily: fonts.black,
-      fontSize: T.size.xxl,
+      fontSize: T.size.title,
       color: colors.textPrimary,
       letterSpacing: T.tracking.tight,
+      lineHeight: 34,
     },
     subtitle: {
       fontFamily: fonts.regular,

@@ -26,12 +26,11 @@
 //
 // This style matches the rest of the white-blended UI on Community/Saved.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { Ban, Ellipsis, Pencil, Star, UserCheck } from "lucide-react-native";
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
-  Modal,
   Pressable,
   StyleSheet,
   Text,
@@ -39,6 +38,7 @@ import {
 } from "react-native";
 
 import { Avatar } from "@/components/Avatar";
+import { DraggableSheet } from "@/components/DraggableSheet";
 import {
   fonts,
   radius,
@@ -136,6 +136,7 @@ export function ProfileHeader({
             displayName={user.displayName}
             userId={user.id}
             size={80}
+            viewable
           />
           {isOwn && onEditPress ? (
             <Pressable
@@ -145,11 +146,7 @@ export function ProfileHeader({
               accessibilityRole="button"
               accessibilityLabel="Edit profile"
             >
-              <MaterialCommunityIcons
-                name="pencil"
-                size={13}
-                color={colors.textInverse}
-              />
+              <Pencil size={13} color={colors.onPrimary} strokeWidth={2} />
             </Pressable>
           ) : null}
         </View>
@@ -193,6 +190,7 @@ export function ProfileHeader({
           displayName={user.displayName}
           userId={user.id}
           size={88}
+          viewable
         />
 
         <View style={defaultStyles.actions}>
@@ -211,11 +209,7 @@ export function ProfileHeader({
               {blockBusy ? (
                 <ActivityIndicator size="small" color={colors.textPrimary} />
               ) : (
-                <MaterialCommunityIcons
-                  name="dots-horizontal"
-                  size={22}
-                  color={colors.textPrimary}
-                />
+                <Ellipsis size={20} color={colors.textPrimary} strokeWidth={2} />
               )}
             </Pressable>
           ) : null}
@@ -241,7 +235,7 @@ export function ProfileHeader({
                 <ActivityIndicator
                   size="small"
                   color={
-                    follow.isFollowing ? colors.primary : colors.textInverse
+                    follow.isFollowing ? colors.primary : colors.onPrimary
                   }
                 />
               ) : (
@@ -296,64 +290,53 @@ export function ProfileHeader({
 
       {/* Block/Unblock action sheet */}
       {showMenu ? (
-        <Modal
+        <DraggableSheet
           visible={menuOpen}
-          transparent
-          animationType="slide"
-          onRequestClose={() => setMenuOpen(false)}
+          onClose={() => setMenuOpen(false)}
         >
+          <Text style={sheetStyles.title} numberOfLines={1}>
+            @{user.username}
+          </Text>
+          <View style={sheetStyles.divider} />
+
           <Pressable
-            style={sheetStyles.overlay}
-            onPress={() => setMenuOpen(false)}
+            onPress={handleBlockPress}
+            style={({ pressed }) => [
+              sheetStyles.action,
+              pressed && defaultStyles.pressed,
+            ]}
+            accessibilityRole="button"
           >
-            {/* Inner Pressable captures taps so they don't close the sheet. */}
-            <Pressable style={sheetStyles.sheet} onPress={() => {}}>
-              <View style={sheetStyles.handle} />
-              <Text style={sheetStyles.title} numberOfLines={1}>
-                @{user.username}
-              </Text>
-              <View style={sheetStyles.divider} />
-
-              <Pressable
-                onPress={handleBlockPress}
-                style={({ pressed }) => [
-                  sheetStyles.action,
-                  pressed && defaultStyles.pressed,
-                ]}
-                accessibilityRole="button"
-              >
-                <MaterialCommunityIcons
-                  name={isBlocked ? "account-check-outline" : "block-helper"}
-                  size={20}
-                  color={isBlocked ? colors.textPrimary : colors.error}
-                />
-                <Text
-                  style={[
-                    sheetStyles.actionText,
-                    !isBlocked && sheetStyles.actionTextDestructive,
-                  ]}
-                >
-                  {isBlocked
-                    ? `Unblock @${user.username}`
-                    : `Block @${user.username}`}
-                </Text>
-              </Pressable>
-
-              <View style={sheetStyles.divider} />
-
-              <Pressable
-                onPress={() => setMenuOpen(false)}
-                style={({ pressed }) => [
-                  sheetStyles.action,
-                  pressed && defaultStyles.pressed,
-                ]}
-                accessibilityRole="button"
-              >
-                <Text style={sheetStyles.cancelText}>Cancel</Text>
-              </Pressable>
-            </Pressable>
+            {isBlocked ? (
+              <UserCheck size={19} color={colors.textPrimary} strokeWidth={2} />
+            ) : (
+              <Ban size={19} color={colors.error} strokeWidth={2} />
+            )}
+            <Text
+              style={[
+                sheetStyles.actionText,
+                !isBlocked && sheetStyles.actionTextDestructive,
+              ]}
+            >
+              {isBlocked
+                ? `Unblock @${user.username}`
+                : `Block @${user.username}`}
+            </Text>
           </Pressable>
-        </Modal>
+
+          <View style={sheetStyles.divider} />
+
+          <Pressable
+            onPress={() => setMenuOpen(false)}
+            style={({ pressed }) => [
+              sheetStyles.action,
+              pressed && defaultStyles.pressed,
+            ]}
+            accessibilityRole="button"
+          >
+            <Text style={sheetStyles.cancelText}>Cancel</Text>
+          </Pressable>
+        </DraggableSheet>
       ) : null}
     </View>
   );
@@ -405,7 +388,7 @@ function SecondaryLine({ stats }: { stats: ProfileStats }) {
   const { styles, colors } = useThemedStyles(makeSharedStyles);
   return (
     <View style={styles.secondaryStats}>
-      <MaterialCommunityIcons name="star" size={13} color={colors.star} />
+      <Star size={13} color={colors.star} fill={colors.star} />
       <Text style={styles.secondaryStat}>
         {stats.averageRating.toFixed(1)} avg
       </Text>
@@ -449,11 +432,7 @@ function BadgesRow({ stats, userId }: { stats: ProfileStats; userId: string }) {
               ]}
             >
               <View style={[styles.badgeMedal, { backgroundColor: tc }]}>
-                <MaterialCommunityIcons
-                  name={b.icon as keyof typeof MaterialCommunityIcons.glyphMap}
-                  size={16}
-                  color={colors.white}
-                />
+                <b.icon size={15} color={colors.white} strokeWidth={2} />
               </View>
               <View style={styles.badgeTextWrap}>
                 <Text style={styles.badgeLabel} numberOfLines={1}>
@@ -746,7 +725,7 @@ function makeDefaultStyles(c: ThemeColors) {
   followButtonText: {
     fontFamily: fonts.bold,
     fontSize: T.size.sm,
-    color: colors.textInverse,
+    color: colors.onPrimary,
   },
   followingButton: {
     paddingHorizontal: spacing.lg,
@@ -810,26 +789,8 @@ function makeDefaultStyles(c: ThemeColors) {
 function makeSheetStyles(c: ThemeColors) {
   const colors = c;
   return StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
-    justifyContent: "flex-end",
-  },
-  sheet: {
-    backgroundColor: colors.cardBackground,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    paddingBottom: spacing.xl,
-    paddingTop: spacing.sm,
-  },
-  handle: {
-    alignSelf: "center",
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.divider,
-    marginVertical: spacing.sm,
-  },
+  // Sheet chrome (backdrop, rounded sheet, drag handle) now lives in
+  // DraggableSheet; only the inner content styles remain here.
   title: {
     fontFamily: fonts.medium,
     fontSize: T.size.sm,

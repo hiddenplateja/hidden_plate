@@ -3,7 +3,13 @@
 // reviews. Owner edits stay admin-only in v1; an approved claim grants the
 // verified-owner badge + respond-to-reviews + (later) buy-featured.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import {
+  ArrowLeft,
+  BadgeCheck,
+  Clock,
+  Lock,
+  type LucideIcon,
+} from "lucide-react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -132,11 +138,7 @@ export default function ClaimRestaurantScreen() {
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >
-          <MaterialCommunityIcons
-            name="arrow-left"
-            size={22}
-            color={colors.textPrimary}
-          />
+          <ArrowLeft size={20} color={colors.textPrimary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.headerTitle}>Claim restaurant</Text>
         <View style={{ width: 36 }} />
@@ -234,7 +236,7 @@ function ClaimBody({
       <Notice
         styles={styles}
         colors={colors}
-        icon="check-decagram"
+        icon={BadgeCheck}
         title="You manage this listing"
         body="Your claim has been approved — you'll see owner tools on the restaurant page."
       />
@@ -245,7 +247,7 @@ function ClaimBody({
       <Notice
         styles={styles}
         colors={colors}
-        icon="account-lock-outline"
+        icon={Lock}
         title="Already claimed"
         body="Someone has already claimed this restaurant. If that's a mistake, contact support."
       />
@@ -256,7 +258,7 @@ function ClaimBody({
       <Notice
         styles={styles}
         colors={colors}
-        icon="clock-outline"
+        icon={Clock}
         title="Claim under review"
         body="We've got your claim and we're reviewing it. We'll be in touch soon."
       />
@@ -375,14 +377,15 @@ function Notice({
 }: {
   styles: ReturnType<typeof makeStyles>;
   colors: ThemeColors;
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: LucideIcon;
   title: string;
   body: string;
 }) {
+  const Icon = icon;
   return (
     <View style={styles.center}>
       <View style={styles.noticeIcon}>
-        <MaterialCommunityIcons name={icon} size={32} color={colors.primary} />
+        <Icon size={30} color={colors.textPrimary} strokeWidth={1.8} />
       </View>
       <Text style={styles.stateTitle}>{title}</Text>
       <Text style={styles.stateBody}>{body}</Text>

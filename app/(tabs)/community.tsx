@@ -33,18 +33,38 @@
 //   pull-to-refresh if it bothers them. Errors are tagged with the
 //   feed-tab so the Sentry dashboard can show which tab is failing more.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import * as Location from "expo-location";
-import { useFocusEffect, useRouter } from "expo-router";
+import {
+  Bell,
+  Bookmark,
+  CircleUserRound,
+  CloudOff,
+  CircleX,
+  Ellipsis,
+  Feather,
+  Flag,
+  Heart,
+  LogOut,
+  MapPin,
+  MessageCircle,
+  Search,
+  Settings,
+  Share2,
+  ShieldUser,
+  Star,
+  Trash2,
+  Users,
+  UserX,
+  UtensilsCrossed,
+  X,
+} from "lucide-react-native";
+import { useFocusEffect, useRouter, type Href } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Dimensions,
   FlatList,
-  Modal,
-  Platform,
   Pressable,
   RefreshControl,
   Share,
@@ -58,12 +78,31 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Avatar } from "@/components/Avatar";
 import { CommunityDrawer } from "@/components/CommunityDrawer";
+import { DraggableSheet } from "@/components/DraggableSheet";
 import { ErrorState } from "@/components/ErrorState";
+import { PhotoViewer } from "@/components/PhotoViewer";
 import { Skeleton, SkeletonCircle, SkeletonText } from "@/components/Skeleton";
+import { PAID_FEATURES_ENABLED } from "@/constants/features";
 import { useAuth } from "@/hooks/useAuth";
 import { blockUser, getHiddenUserIds } from "@/services/blocks";
 import { getFollowCounts, getFollowingIds } from "@/services/follows";
-import { reportReview } from "@/services/reports";
+import {
+  getPostCommentCounts,
+} from "@/services/postComments";
+import {
+  getLikedPostIds,
+  getPostLikeCounts,
+  likePost,
+  postLikesEnabled,
+  unlikePost,
+} from "@/services/postLikes";
+import {
+  deletePost,
+  listLatestPosts,
+  listPostsByFollowing,
+  postsEnabled,
+} from "@/services/posts";
+import { postReportsEnabled, reportPost, reportReview } from "@/services/reports";
 import { getRestaurantsByIds } from "@/services/restaurants";
 import {
   getLikedReviewIds,
@@ -83,17 +122,17 @@ import { getUsersByIds } from "@/services/users";
 import {
   fonts,
   radius,
+  shadows,
   spacing,
   typographyTokens as T,
 } from "@/theme/colors";
 import type { ThemeColors } from "@/theme/themes";
 import { useThemedStyles } from "@/theme/useThemedStyles";
+import type { Post } from "@/types/post";
 import type { Parish, Restaurant } from "@/types/restaurant";
 import type { Review } from "@/types/review";
 import type { User } from "@/types/user";
 import { rankForYou, type RankingContext } from "@/utils/forYouRanking";
-
-const { width: SW } = Dimensions.get("window");
 
 const BATCH_SIZE = 50;
 const FOLLOWING_BATCH = 20;
@@ -104,6 +143,62 @@ interface FeedItem {
   review: Review;
   author: User | null;
   restaurant: Restaurant | null;
+}
+
+/** A hydrated community post (non-review) for the feed. */
+interface PostItem {
+  post: Post;
+  author: User | null;
+  likeCount: number;
+  commentCount: number;
+  liked: boolean;
+}
+
+/** One feed row — either a review or a plain post. */
+type FeedEntry =
+  | ({ kind: "review" } & FeedItem)
+  | ({ kind: "post" } & PostItem);
+
+function entryCreatedAt(e: FeedEntry): string {
+  return e.kind === "review" ? e.review.createdAt : e.post.createdAt;
+}
+
+/**
+ * Merge reviews + posts into one feed.
+ *  - "chrono": strict newest-first (Following — both sources are chronological).
+ *  - "weave":  keep the ranked review order and slot posts (newest first) in
+ *              every few rows (For You — re-sorting by date would erase the
+ *              personalization ranking).
+ */
+function mergeFeed(
+  reviews: FeedItem[],
+  posts: PostItem[],
+  mode: "chrono" | "weave",
+): FeedEntry[] {
+  const reviewEntries: FeedEntry[] = reviews.map((r) => ({
+    kind: "review",
+    ...r,
+  }));
+  const postEntries: FeedEntry[] = posts.map((p) => ({ kind: "post", ...p }));
+
+  if (mode === "chrono") {
+    return [...reviewEntries, ...postEntries].sort((a, b) =>
+      entryCreatedAt(a) < entryCreatedAt(b) ? 1 : -1,
+    );
+  }
+
+  // Weave: a post after every 3rd review, leftovers appended at the end.
+  const GAP = 3;
+  const out: FeedEntry[] = [];
+  let pi = 0;
+  for (let ri = 0; ri < reviewEntries.length; ri++) {
+    out.push(reviewEntries[ri]);
+    if ((ri + 1) % GAP === 0 && pi < postEntries.length) {
+      out.push(postEntries[pi++]);
+    }
+  }
+  while (pi < postEntries.length) out.push(postEntries[pi++]);
+  return out;
 }
 
 interface FeedState {
@@ -279,7 +374,12 @@ export default function CommunityScreen() {
   const [activeTab, setActiveTab] = useState<FeedTab>("following");
   const [following, setFollowing] = useState<FeedState>(EMPTY_FEED);
   const [forYou, setForYou] = useState<FeedState>(EMPTY_FEED);
+  // Non-review posts, per tab. Loaded alongside the review pages and
+  // refreshed on every focus so a just-composed post shows up immediately.
+  const [followingPosts, setFollowingPosts] = useState<PostItem[]>([]);
+  const [latestPosts, setLatestPosts] = useState<PostItem[]>([]);
   const [reviewToManage, setReviewToManage] = useState<Review | null>(null);
+  const [postToManage, setPostToManage] = useState<Post | null>(null);
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
   // User IDs to filter out of the feed — the mutual block set (people I
   // blocked + people who blocked me). Loaded on focus + refresh, and added
@@ -316,6 +416,57 @@ export default function CommunityScreen() {
     },
     [],
   );
+
+  const hydratePosts = useCallback(
+    async (posts: Post[]): Promise<PostItem[]> => {
+      if (posts.length === 0) return [];
+      const ids = posts.map((p) => p.id);
+      // Authors + like/comment counts + my-liked set, all in parallel. The
+      // interaction helpers are tolerant (empty on failure), so a hiccup just
+      // shows zero counts rather than breaking the feed.
+      const [authors, likeCounts, commentCounts, likedIds] = await Promise.all([
+        getUsersByIds(posts.map((p) => p.userId)),
+        getPostLikeCounts(ids),
+        getPostCommentCounts(ids),
+        getLikedPostIds(ids),
+      ]);
+      return posts.map((post) => ({
+        post,
+        author: authors.get(post.userId) ?? null,
+        likeCount: likeCounts.get(post.id) ?? 0,
+        commentCount: commentCounts.get(post.id) ?? 0,
+        liked: likedIds.has(post.id),
+      }));
+    },
+    [],
+  );
+
+  // Fetch the post window for both tabs. Tolerant end to end (the posts
+  // service returns empty pages on failure), so this can never error the
+  // feed — worst case posts just don't appear. Runs on focus so a post
+  // composed moments ago shows without a manual pull-to-refresh.
+  const refreshPosts = useCallback(async () => {
+    if (!postsEnabled()) return;
+    const latest = await listLatestPosts();
+    setLatestPosts(await hydratePosts(latest.items));
+    if (user) {
+      const followingIds = await getFollowingIds(user.id).catch(
+        () => [] as string[],
+      );
+      const mine = await listPostsByFollowing(followingIds);
+      // Your own posts belong in your Following feed too (X-style).
+      const own = latest.items.filter(
+        (p) => p.userId === user.id && !mine.items.some((m) => m.id === p.id),
+      );
+      setFollowingPosts(
+        await hydratePosts(
+          [...mine.items, ...own].sort((a, b) =>
+            a.createdAt < b.createdAt ? 1 : -1,
+          ),
+        ),
+      );
+    }
+  }, [user, hydratePosts]);
 
   const buildRankingContext = useCallback(async (): Promise<RankingContext> => {
     if (!user) {
@@ -579,17 +730,21 @@ export default function CommunityScreen() {
   useFocusEffect(
     useCallback(() => {
       loadBlocked();
+      // Posts are cheap (one or two list calls) — refresh every focus so a
+      // post composed in the modal shows the moment you land back here.
+      refreshPosts();
       if (!loaded.current.following) loadFollowing();
       if (!loaded.current.for_you) loadForYou();
-    }, [loadBlocked, loadFollowing, loadForYou]),
+    }, [loadBlocked, refreshPosts, loadFollowing, loadForYou]),
   );
 
   const handleRefresh = useCallback(() => {
     loaded.current[activeTab] = false;
     loadBlocked();
+    refreshPosts();
     if (activeTab === "following") loadFollowing(true);
     else loadForYou(true);
-  }, [activeTab, loadBlocked, loadFollowing, loadForYou]);
+  }, [activeTab, loadBlocked, refreshPosts, loadFollowing, loadForYou]);
 
   const handleRetry = useCallback(() => {
     if (activeTab === "following") loadFollowing(false);
@@ -669,6 +824,44 @@ export default function CommunityScreen() {
     [activeTab],
   );
 
+  // Per-post in-flight guard for the like toggle (same rationale as reviews).
+  const postLikeInFlight = useRef<Set<string>>(new Set());
+
+  // Toggle like on a plain post. Updates both post lists optimistically so the
+  // heart + count react instantly regardless of which tab it lives in; reverts
+  // on failure. Own posts can't be liked (guarded in the card too).
+  const handleTogglePostLike = useCallback(
+    async (postId: string, currentlyLiked: boolean) => {
+      if (!postLikesEnabled() || postLikeInFlight.current.has(postId)) return;
+      postLikeInFlight.current.add(postId);
+
+      const apply = (like: boolean) => {
+        const patch = (p: PostItem): PostItem =>
+          p.post.id === postId
+            ? {
+                ...p,
+                liked: like,
+                likeCount: Math.max(0, p.likeCount + (like ? 1 : -1)),
+              }
+            : p;
+        setFollowingPosts((prev) => prev.map(patch));
+        setLatestPosts((prev) => prev.map(patch));
+      };
+
+      apply(!currentlyLiked);
+      try {
+        if (currentlyLiked) await unlikePost(postId);
+        else await likePost(postId);
+      } catch (err) {
+        apply(currentlyLiked); // revert
+        captureError(err, { screen: "community", op: "togglePostLike", postId });
+      } finally {
+        postLikeInFlight.current.delete(postId);
+      }
+    },
+    [],
+  );
+
   // Native share sheet, text-only message
   const handleShare = useCallback(async (item: FeedItem) => {
     try {
@@ -679,6 +872,34 @@ export default function CommunityScreen() {
       // Share sheet failures are usually "user dismissed" — don't report
       // unless this becomes a real signal. Keep noisy-but-cheap log only.
       console.warn("[community] share failed:", err);
+    }
+  }, []);
+
+  const handleDeletePost = useCallback(async (post: Post) => {
+    try {
+      await deletePost(post.id);
+      setFollowingPosts((prev) => prev.filter((p) => p.post.id !== post.id));
+      setLatestPosts((prev) => prev.filter((p) => p.post.id !== post.id));
+    } catch (err) {
+      captureError(err, {
+        screen: "community",
+        op: "deletePost",
+        postId: post.id,
+      });
+      Alert.alert(
+        "Couldn't delete",
+        err instanceof Error ? err.message : "Try again.",
+      );
+    }
+  }, []);
+
+  const handleSharePost = useCallback(async (item: PostItem) => {
+    try {
+      await Share.share({
+        message: `${item.author?.displayName ?? "Someone"} on Hidden Plate:\n\n"${item.post.text}"`,
+      });
+    } catch (err) {
+      console.warn("[community] share post failed:", err);
     }
   }, []);
 
@@ -732,6 +953,32 @@ export default function CommunityScreen() {
     }
   }, []);
 
+  // Report a post. Same optimistic-hide pattern as reviews: hide it from the
+  // feed immediately (via hiddenIds), file the report, revert on failure.
+  const handleReportPost = useCallback(async (post: Post) => {
+    setHiddenIds((p) => new Set(p).add(post.id));
+    setPostToManage(null);
+    try {
+      await reportPost(post.id, "inappropriate");
+      Alert.alert("Reported", "Thank you for keeping our community safe.");
+    } catch (err) {
+      setHiddenIds((p) => {
+        const next = new Set(p);
+        next.delete(post.id);
+        return next;
+      });
+      captureError(err, {
+        screen: "community",
+        op: "reportPost",
+        postId: post.id,
+      });
+      Alert.alert(
+        "Couldn't report",
+        err instanceof Error ? err.message : "Please try again.",
+      );
+    }
+  }, []);
+
   // Block the author of a review. Optimistic: add to blockedUserIds so all
   // of their content disappears from the feed immediately; revert on error.
   const handleBlockAuthor = useCallback(async (review: Review) => {
@@ -762,20 +1009,40 @@ export default function CommunityScreen() {
     (i) => !hiddenIds.has(i.review.id) && !blockedUserIds.has(i.review.userId),
   );
 
-  // In-feed search: filters the loaded posts by the poster (name/handle),
-  // the restaurant name in the post, and the review text. Empty query =
-  // the full feed.
+  // Posts for the active tab, minus blocked authors and reported/hidden posts.
+  const currentPosts = (
+    activeTab === "following" ? followingPosts : latestPosts
+  ).filter(
+    (p) => !blockedUserIds.has(p.post.userId) && !hiddenIds.has(p.post.id),
+  );
+
+  // One merged feed of reviews + posts. Following is strictly chronological;
+  // For You keeps the ranked review order and weaves posts in.
+  const mergedEntries = mergeFeed(
+    visibleItems,
+    currentPosts,
+    activeTab === "following" ? "chrono" : "weave",
+  );
+
+  // In-feed search: filters the loaded entries by the poster (name/handle),
+  // the restaurant name, and the review/post text. Empty query = full feed.
   const searchTerm = searchQuery.trim().toLowerCase();
   const searching = searchOpen && searchTerm.length > 0;
   const displayedItems = searching
-    ? visibleItems.filter(
-        (i) =>
-          !!i.author?.displayName?.toLowerCase().includes(searchTerm) ||
-          !!i.author?.username?.toLowerCase().includes(searchTerm) ||
-          !!i.restaurant?.name?.toLowerCase().includes(searchTerm) ||
-          !!i.review.comment?.toLowerCase().includes(searchTerm),
-      )
-    : visibleItems;
+    ? mergedEntries.filter((e) => {
+        const authorHit =
+          !!e.author?.displayName?.toLowerCase().includes(searchTerm) ||
+          !!e.author?.username?.toLowerCase().includes(searchTerm);
+        if (e.kind === "post") {
+          return authorHit || e.post.text.toLowerCase().includes(searchTerm);
+        }
+        return (
+          authorHit ||
+          !!e.restaurant?.name?.toLowerCase().includes(searchTerm) ||
+          !!e.review.comment?.toLowerCase().includes(searchTerm)
+        );
+      })
+    : mergedEntries;
 
   const handleToggleSearch = useCallback(() => {
     setSearchOpen((prev) => {
@@ -840,8 +1107,178 @@ export default function CommunityScreen() {
           ?.author ?? null)
       : null;
 
+  // Same lookup for the post manage sheet.
+  const managePostAuthor =
+    postToManage != null
+      ? (currentPosts.find((p) => p.post.id === postToManage.id)?.author ??
+        null)
+      : null;
+
   const renderItem = useCallback(
-    ({ item, index }: { item: FeedItem; index: number }) => {
+    ({ item, index }: { item: FeedEntry; index: number }) => {
+      // ── Plain post card — same chrome as a review, minus stars +
+      //    restaurant tag. Tapping the card opens the post thread; the footer
+      //    has Like · Comment · Share backed by the postLikes/postComments
+      //    collections.
+      if (item.kind === "post") {
+        const { post, author, liked, likeCount, commentCount } = item;
+        const isOwnPost = user?.id === post.userId;
+        return (
+          <Animated.View
+            entering={FadeInDown.delay(Math.min(index, 5) * 60).springify()}
+          >
+            <Pressable
+              style={({ pressed }) => [
+                cardStyles.card,
+                pressed && cardStyles.cardPressed,
+              ]}
+              onPress={() =>
+                // Typed-routes union regenerates on dev-server start; this
+                // freshly-added route isn't in it yet — the route exists.
+                router.push(`/post/${post.id}` as unknown as Href)
+              }
+              accessibilityRole="button"
+            >
+              <View style={cardStyles.authorRow}>
+                <Pressable
+                  style={cardStyles.authorInfo}
+                  onPress={(e) => {
+                    e.stopPropagation?.();
+                    router.push(`/profile/${post.userId}`);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`View ${author?.displayName ?? "user"}'s profile`}
+                >
+                  <AuthorAvatar author={author} userId={post.userId} />
+                  <View style={cardStyles.authorText}>
+                    <Text style={cardStyles.authorName} numberOfLines={1}>
+                      {author?.displayName ?? "Hidden Plate user"}
+                    </Text>
+                    <Text style={cardStyles.authorHandle}>
+                      {author?.username ? `@${author.username} · ` : ""}
+                      {formatTimeAgo(post.createdAt)}
+                    </Text>
+                  </View>
+                </Pressable>
+
+                <Pressable
+                  onPress={(e) => {
+                    e.stopPropagation?.();
+                    setPostToManage(post);
+                  }}
+                  hitSlop={8}
+                  style={cardStyles.moreBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="More options"
+                >
+                  <Ellipsis size={18} color={colors.textMuted} strokeWidth={2} />
+                </Pressable>
+              </View>
+
+              <Text style={cardStyles.postText}>{post.text}</Text>
+
+              {post.imageIds.length > 0 ? (
+                <Pressable
+                  onPress={(e) => {
+                    e.stopPropagation?.();
+                    setActivePhotoSet(post.imageIds);
+                    setActivePhotoIndex(0);
+                  }}
+                  style={cardStyles.photoWrap}
+                >
+                  <Image
+                    source={{ uri: getImageViewUrl(post.imageIds[0]) }}
+                    style={cardStyles.photo}
+                    contentFit="cover"
+                    transition={250}
+                    cachePolicy="memory-disk"
+                  />
+                  {post.imageIds.length > 1 ? (
+                    <View style={cardStyles.photoBadge}>
+                      <Text style={cardStyles.photoBadgeText}>
+                        +{post.imageIds.length - 1}
+                      </Text>
+                    </View>
+                  ) : null}
+                </Pressable>
+              ) : null}
+
+              <View style={cardStyles.footer}>
+                {postLikesEnabled() ? (
+                  <Pressable
+                    onPress={(e) => {
+                      e.stopPropagation?.();
+                      handleTogglePostLike(post.id, liked);
+                    }}
+                    disabled={isOwnPost}
+                    style={({ pressed }) => [
+                      cardStyles.actionBtn,
+                      pressed && { opacity: 0.6 },
+                      isOwnPost && { opacity: 0.4 },
+                    ]}
+                    hitSlop={6}
+                    accessibilityRole="button"
+                    accessibilityLabel={liked ? "Unlike" : "Like"}
+                  >
+                    <Heart
+                      size={19}
+                      color={liked ? colors.primary : colors.textMuted}
+                      fill={liked ? colors.primary : "transparent"}
+                      strokeWidth={2}
+                    />
+                    <Text
+                      style={[
+                        cardStyles.actionCount,
+                        liked && cardStyles.actionCountActive,
+                      ]}
+                    >
+                      {likeCount}
+                    </Text>
+                  </Pressable>
+                ) : null}
+
+                <Pressable
+                  onPress={(e) => {
+                    e.stopPropagation?.();
+                    router.push(`/post/${post.id}` as unknown as Href);
+                  }}
+                  style={({ pressed }) => [
+                    cardStyles.actionBtn,
+                    pressed && { opacity: 0.6 },
+                  ]}
+                  hitSlop={6}
+                  accessibilityRole="button"
+                  accessibilityLabel="View comments"
+                >
+                  <MessageCircle
+                    size={18}
+                    color={colors.textMuted}
+                    strokeWidth={2}
+                  />
+                  <Text style={cardStyles.actionCount}>{commentCount}</Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={(e) => {
+                    e.stopPropagation?.();
+                    handleSharePost(item);
+                  }}
+                  style={({ pressed }) => [
+                    cardStyles.actionBtn,
+                    pressed && { opacity: 0.6 },
+                  ]}
+                  hitSlop={6}
+                  accessibilityRole="button"
+                  accessibilityLabel="Share"
+                >
+                  <Share2 size={18} color={colors.textMuted} strokeWidth={2} />
+                </Pressable>
+              </View>
+            </Pressable>
+          </Animated.View>
+        );
+      }
+
       const { review, author, restaurant } = item;
       const isLiked = currentFeed.likedIds.has(review.id);
       const isOwn = user?.id === review.userId;
@@ -895,11 +1332,7 @@ export default function CommunityScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="More options"
               >
-                <MaterialCommunityIcons
-                  name="dots-horizontal"
-                  size={20}
-                  color={colors.textMuted}
-                />
+                <Ellipsis size={18} color={colors.textMuted} strokeWidth={2} />
               </Pressable>
             </View>
 
@@ -910,11 +1343,7 @@ export default function CommunityScreen() {
                 router.push(`/restaurant/${review.restaurantId}`);
               }}
             >
-              <MaterialCommunityIcons
-                name="map-marker"
-                size={12}
-                color={colors.primary}
-              />
+              <MapPin size={12} color={colors.textSecondary} strokeWidth={2.2} />
               <Text style={cardStyles.restaurantTagText} numberOfLines={1}>
                 Reviewed{" "}
                 <Text style={cardStyles.restaurantTagBold}>
@@ -931,11 +1360,12 @@ export default function CommunityScreen() {
 
             <View style={cardStyles.starsRow}>
               {[1, 2, 3, 4, 5].map((i) => (
-                <MaterialCommunityIcons
+                <Star
                   key={i}
-                  name={i <= review.rating ? "star" : "star-outline"}
-                  size={15}
+                  size={14}
                   color={i <= review.rating ? colors.star : colors.border}
+                  fill={i <= review.rating ? colors.star : "transparent"}
+                  strokeWidth={2}
                 />
               ))}
             </View>
@@ -999,10 +1429,11 @@ export default function CommunityScreen() {
                 accessibilityRole="button"
                 accessibilityLabel={isLiked ? "Unlike" : "Like"}
               >
-                <MaterialCommunityIcons
-                  name={isLiked ? "heart" : "heart-outline"}
-                  size={20}
+                <Heart
+                  size={19}
                   color={isLiked ? colors.primary : colors.textMuted}
+                  fill={isLiked ? colors.primary : "transparent"}
+                  strokeWidth={2}
                 />
                 <Text
                   style={[
@@ -1027,10 +1458,10 @@ export default function CommunityScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="View comments"
               >
-                <MaterialCommunityIcons
-                  name="comment-outline"
-                  size={19}
+                <MessageCircle
+                  size={18}
                   color={colors.textMuted}
+                  strokeWidth={2}
                 />
                 <Text style={cardStyles.actionCount}>
                   {review.commentCount ?? 0}
@@ -1050,11 +1481,7 @@ export default function CommunityScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Share"
               >
-                <MaterialCommunityIcons
-                  name="share-outline"
-                  size={20}
-                  color={colors.textMuted}
-                />
+                <Share2 size={18} color={colors.textMuted} strokeWidth={2} />
               </Pressable>
             </View>
           </Pressable>
@@ -1065,7 +1492,9 @@ export default function CommunityScreen() {
       currentFeed.likedIds,
       user,
       handleToggleLike,
+      handleTogglePostLike,
       handleShare,
+      handleSharePost,
       router,
       cardStyles,
       colors,
@@ -1110,11 +1539,11 @@ export default function CommunityScreen() {
           accessibilityRole="button"
           accessibilityLabel={searchOpen ? "Close search" : "Search"}
         >
-          <MaterialCommunityIcons
-            name={searchOpen ? "close" : "magnify"}
-            size={24}
-            color={colors.textPrimary}
-          />
+          {searchOpen ? (
+            <X size={22} color={colors.textPrimary} strokeWidth={2.2} />
+          ) : (
+            <Search size={22} color={colors.textPrimary} strokeWidth={2.2} />
+          )}
         </Pressable>
       </Animated.View>
 
@@ -1148,10 +1577,10 @@ export default function CommunityScreen() {
       {searchOpen ? (
         <View style={styles.searchWrap}>
           <View style={styles.searchBar}>
-            <MaterialCommunityIcons
-              name="magnify"
-              size={20}
+            <Search
+              size={19}
               color={colors.textSecondary}
+              strokeWidth={2.2}
               style={{ marginRight: spacing.sm }}
             />
             <TextInput
@@ -1166,11 +1595,7 @@ export default function CommunityScreen() {
             />
             {searchQuery.length > 0 ? (
               <Pressable onPress={() => setSearchQuery("")} hitSlop={8}>
-                <MaterialCommunityIcons
-                  name="close-circle"
-                  size={18}
-                  color={colors.textMuted}
-                />
+                <CircleX size={17} color={colors.textMuted} strokeWidth={2} />
               </Pressable>
             ) : null}
           </View>
@@ -1180,7 +1605,7 @@ export default function CommunityScreen() {
       {showError ? (
         <ErrorState
           variant="screen"
-          icon="cloud-off-outline"
+          icon={CloudOff}
           title="Couldn't load the feed"
           body="Check your connection and try again."
           onRetry={handleRetry}
@@ -1200,7 +1625,9 @@ export default function CommunityScreen() {
       ) : (
         <FlatList
           data={displayedItems}
-          keyExtractor={(item) => item.review.id}
+          keyExtractor={(item) =>
+            item.kind === "post" ? `post-${item.post.id}` : item.review.id
+          }
           renderItem={renderItem}
           style={styles.list}
           contentContainerStyle={styles.listContent}
@@ -1236,10 +1663,10 @@ export default function CommunityScreen() {
             searching ? (
               <View style={styles.emptyContainer}>
                 <View style={styles.emptyIconWrap}>
-                  <MaterialCommunityIcons
-                    name="magnify"
-                    size={32}
-                    color={colors.primary}
+                  <Search
+                    size={30}
+                    color={colors.textPrimary}
+                    strokeWidth={1.8}
                   />
                 </View>
                 <Text style={styles.emptyTitle}>No matches</Text>
@@ -1255,10 +1682,10 @@ export default function CommunityScreen() {
               {activeTab === "following" && currentFeed.notFollowingAnyone ? (
                 <>
                   <View style={styles.emptyIconWrap}>
-                    <MaterialCommunityIcons
-                      name="account-group-outline"
-                      size={32}
-                      color={colors.primary}
+                    <Users
+                      size={30}
+                      color={colors.textPrimary}
+                      strokeWidth={1.8}
                     />
                   </View>
                   <Text style={styles.emptyTitle}>Your feed is quiet!</Text>
@@ -1270,10 +1697,10 @@ export default function CommunityScreen() {
               ) : (
                 <>
                   <View style={styles.emptyIconWrap}>
-                    <MaterialCommunityIcons
-                      name="silverware-fork-knife"
-                      size={32}
-                      color={colors.primary}
+                    <UtensilsCrossed
+                      size={30}
+                      color={colors.textPrimary}
+                      strokeWidth={1.8}
                     />
                   </View>
                   <Text style={styles.emptyTitle}>No reviews yet</Text>
@@ -1288,21 +1715,13 @@ export default function CommunityScreen() {
         />
       )}
 
-      <Modal
+      <DraggableSheet
         visible={!!reviewToManage}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setReviewToManage(null)}
+        onClose={() => setReviewToManage(null)}
       >
-        <Pressable
-          style={sheetStyles.overlay}
-          onPress={() => setReviewToManage(null)}
-        >
-          <View style={sheetStyles.sheet}>
-            <View style={sheetStyles.handle} />
-            <Text style={sheetStyles.title}>Manage Review</Text>
+        <Text style={sheetStyles.title}>Manage Review</Text>
 
-            {reviewToManage?.userId === user?.id ? (
+        {reviewToManage?.userId === user?.id ? (
               <Pressable
                 style={sheetStyles.item}
                 onPress={() => {
@@ -1318,11 +1737,7 @@ export default function CommunityScreen() {
                   ]);
                 }}
               >
-                <MaterialCommunityIcons
-                  name="trash-can-outline"
-                  size={22}
-                  color={colors.error}
-                />
+                <Trash2 size={20} color={colors.error} strokeWidth={2} />
                 <Text style={[sheetStyles.itemText, { color: colors.error }]}>
                   Delete Review
                 </Text>
@@ -1348,11 +1763,7 @@ export default function CommunityScreen() {
                     );
                   }}
                 >
-                  <MaterialCommunityIcons
-                    name="flag-outline"
-                    size={22}
-                    color={colors.error}
-                  />
+                  <Flag size={20} color={colors.error} strokeWidth={2} />
                   <Text style={[sheetStyles.itemText, { color: colors.error }]}>
                     Report as Inappropriate
                   </Text>
@@ -1380,11 +1791,7 @@ export default function CommunityScreen() {
                     );
                   }}
                 >
-                  <MaterialCommunityIcons
-                    name="account-cancel-outline"
-                    size={22}
-                    color={colors.textPrimary}
-                  />
+                  <UserX size={20} color={colors.textPrimary} strokeWidth={2} />
                   <Text style={sheetStyles.itemText}>
                     {manageAuthor?.username
                       ? `Block @${manageAuthor.username}`
@@ -1394,61 +1801,143 @@ export default function CommunityScreen() {
               </>
             )}
 
-            <Pressable
-              style={sheetStyles.cancelBtn}
-              onPress={() => setReviewToManage(null)}
-            >
-              <Text style={sheetStyles.cancelText}>Cancel</Text>
-            </Pressable>
-          </View>
+        <Pressable
+          style={sheetStyles.cancelBtn}
+          onPress={() => setReviewToManage(null)}
+        >
+          <Text style={sheetStyles.cancelText}>Cancel</Text>
         </Pressable>
-      </Modal>
+      </DraggableSheet>
 
-      <Modal
-        visible={activePhotoIndex !== null}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setActivePhotoIndex(null)}
+      {/* Manage sheet for plain posts — delete your own, block other authors. */}
+      <DraggableSheet
+        visible={!!postToManage}
+        onClose={() => setPostToManage(null)}
       >
-        <View style={photoStyles.overlay}>
-          <SafeAreaView style={{ flex: 1 }}>
+        <Text style={sheetStyles.title}>Manage Post</Text>
+
+        {postToManage?.userId === user?.id ? (
+          <Pressable
+            style={sheetStyles.item}
+            onPress={() => {
+              const p = postToManage;
+              setPostToManage(null);
+              Alert.alert("Delete Post?", "This can't be undone.", [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Delete",
+                  style: "destructive",
+                  onPress: () => p && handleDeletePost(p),
+                },
+              ]);
+            }}
+          >
+            <Trash2 size={20} color={colors.error} strokeWidth={2} />
+            <Text style={[sheetStyles.itemText, { color: colors.error }]}>
+              Delete Post
+            </Text>
+          </Pressable>
+        ) : (
+          <>
+            {postReportsEnabled() ? (
+              <Pressable
+                style={sheetStyles.item}
+                onPress={() => {
+                  const p = postToManage;
+                  setPostToManage(null);
+                  Alert.alert("Report Post", "Report this as inappropriate?", [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                      text: "Report",
+                      style: "destructive",
+                      onPress: () => p && handleReportPost(p),
+                    },
+                  ]);
+                }}
+              >
+                <Flag size={20} color={colors.error} strokeWidth={2} />
+                <Text style={[sheetStyles.itemText, { color: colors.error }]}>
+                  Report as Inappropriate
+                </Text>
+              </Pressable>
+            ) : null}
+
             <Pressable
-              style={photoStyles.closeBtn}
-              onPress={() => setActivePhotoIndex(null)}
-              hitSlop={10}
+              style={sheetStyles.item}
+              onPress={() => {
+                const p = postToManage;
+                const uname = managePostAuthor?.username;
+                setPostToManage(null);
+                Alert.alert(
+                  "Block user",
+                  uname
+                    ? `Block @${uname}? You won't see each other's posts or reviews.`
+                    : "Block this user? You won't see each other's posts or reviews.",
+                  [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                      text: "Block",
+                      style: "destructive",
+                      onPress: () => {
+                        if (!p) return;
+                        setBlockedUserIds((prev) => new Set(prev).add(p.userId));
+                        blockUser(p.userId).catch((err) => {
+                          setBlockedUserIds((prev) => {
+                            const next = new Set(prev);
+                            next.delete(p.userId);
+                            return next;
+                          });
+                          captureError(err, {
+                            screen: "community",
+                            op: "blockPostAuthor",
+                            targetUserId: p.userId,
+                          });
+                          Alert.alert(
+                            "Couldn't block",
+                            err instanceof Error ? err.message : "Try again.",
+                          );
+                        });
+                      },
+                    },
+                  ],
+                );
+              }}
             >
-              <MaterialCommunityIcons
-                name="close"
-                size={22}
-                color={colors.white}
-              />
+              <UserX size={20} color={colors.textPrimary} strokeWidth={2} />
+              <Text style={sheetStyles.itemText}>
+                {managePostAuthor?.username
+                  ? `Block @${managePostAuthor.username}`
+                  : "Block user"}
+              </Text>
             </Pressable>
-            <FlatList
-              data={activePhotoSet}
-              keyExtractor={(id, i) => `viewer-${id}-${i}`}
-              horizontal
-              pagingEnabled
-              showsHorizontalScrollIndicator={false}
-              initialScrollIndex={activePhotoIndex ?? 0}
-              getItemLayout={(_, index) => ({
-                length: SW,
-                offset: SW * index,
-                index,
-              })}
-              renderItem={({ item: fileId }) => (
-                <View style={{ width: SW, justifyContent: "center" }}>
-                  <Image
-                    source={{ uri: getImageViewUrl(fileId) }}
-                    style={{ width: SW, height: SW * 1.1 }}
-                    contentFit="contain"
-                    cachePolicy="memory-disk"
-                  />
-                </View>
-              )}
-            />
-          </SafeAreaView>
-        </View>
-      </Modal>
+          </>
+        )}
+
+        <Pressable
+          style={sheetStyles.cancelBtn}
+          onPress={() => setPostToManage(null)}
+        >
+          <Text style={sheetStyles.cancelText}>Cancel</Text>
+        </Pressable>
+      </DraggableSheet>
+
+      {/* Compose FAB — X-style floating button (hidden when posting is off). */}
+      {postsEnabled() ? (
+        <Pressable
+          onPress={() => router.push("/compose-post")}
+          style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
+          accessibilityRole="button"
+          accessibilityLabel="Write a post"
+        >
+          <Feather size={22} color={colors.white} strokeWidth={2.2} />
+        </Pressable>
+      ) : null}
+
+      <PhotoViewer
+        photos={activePhotoSet.map(getImageViewUrl)}
+        index={activePhotoIndex}
+        onClose={() => setActivePhotoIndex(null)}
+      />
 
       <CommunityDrawer
         visible={drawerOpen}
@@ -1477,12 +1966,12 @@ export default function CommunityScreen() {
             });
           }
         }}
-        onPremiumPress={handlePremium}
+        onPremiumPress={PAID_FEATURES_ENABLED ? handlePremium : undefined}
         items={[
           ...(isAdmin
             ? [
                 {
-                  icon: "shield-account" as const,
+                  icon: ShieldUser,
                   label: "Admin",
                   onPress: () => {
                     setDrawerOpen(false);
@@ -1492,7 +1981,7 @@ export default function CommunityScreen() {
               ]
             : []),
           {
-            icon: "account-circle-outline",
+            icon: CircleUserRound,
             label: "My Profile",
             onPress: () => {
               setDrawerOpen(false);
@@ -1500,7 +1989,7 @@ export default function CommunityScreen() {
             },
           },
           {
-            icon: "bookmark-outline",
+            icon: Bookmark,
             label: "Saved",
             onPress: () => {
               setDrawerOpen(false);
@@ -1508,7 +1997,7 @@ export default function CommunityScreen() {
             },
           },
           {
-            icon: "bell-outline",
+            icon: Bell,
             label: "Notifications",
             onPress: () => {
               setDrawerOpen(false);
@@ -1516,7 +2005,7 @@ export default function CommunityScreen() {
             },
           },
           {
-            icon: "cog-outline",
+            icon: Settings,
             label: "Settings",
             onPress: () => {
               setDrawerOpen(false);
@@ -1525,7 +2014,7 @@ export default function CommunityScreen() {
           },
         ]}
         footer={{
-          icon: "logout",
+          icon: LogOut,
           label: "Log Out",
           danger: true,
           onPress: handleLogout,
@@ -1672,7 +2161,7 @@ function makeStyles(c: ThemeColors) {
     width: 72,
     height: 72,
     borderRadius: radius.full,
-    backgroundColor: colors.primaryLight,
+    backgroundColor: colors.surface,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: spacing.sm,
@@ -1691,6 +2180,20 @@ function makeStyles(c: ThemeColors) {
     textAlign: "center",
     lineHeight: 22,
   },
+  // X-style compose FAB, floating above the feed's bottom-right corner.
+  fab: {
+    position: "absolute",
+    right: spacing.screen,
+    bottom: spacing.xl,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+    ...shadows.md,
+  },
+  fabPressed: { backgroundColor: colors.accentDark },
   });
 }
 
@@ -1741,32 +2244,31 @@ function makeCardStyles(c: ThemeColors) {
     borderWidth: 1,
     borderColor: colors.divider,
   },
+  // Quiet neutral chip — a filled surface pill (no border) so the ink
+  // palette doesn't render it as a heavy outlined box.
   restaurantTag: {
     flexDirection: "row",
     alignItems: "center",
     alignSelf: "flex-start",
-    backgroundColor: colors.primaryLight,
+    backgroundColor: colors.surface,
     paddingHorizontal: spacing.md,
-    paddingVertical: 5,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.primary,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
     marginBottom: spacing.md,
-    gap: 4,
+    gap: 5,
   },
   restaurantTagText: {
     fontFamily: fonts.regular,
     fontSize: T.size.sm,
-    color: colors.primary,
+    color: colors.textSecondary,
   },
   restaurantTagBold: {
     fontFamily: fonts.bold,
-    color: colors.primary,
+    color: colors.textPrimary,
   },
   restaurantTagParish: {
     fontFamily: fonts.regular,
-    color: colors.primary,
-    opacity: 0.8,
+    color: colors.textMuted,
   },
   starsRow: {
     flexDirection: "row",
@@ -1778,6 +2280,14 @@ function makeCardStyles(c: ThemeColors) {
     fontSize: T.size.base,
     color: colors.textPrimary,
     lineHeight: 22,
+    marginBottom: spacing.md,
+  },
+  // Plain-post body — a touch larger than review comments, X-style.
+  postText: {
+    fontFamily: fonts.regular,
+    fontSize: T.size.lg,
+    color: colors.textPrimary,
+    lineHeight: 24,
     marginBottom: spacing.md,
   },
   photoWrap: {
@@ -1838,26 +2348,8 @@ function makeCardStyles(c: ThemeColors) {
 function makeSheetStyles(c: ThemeColors) {
   const colors = c;
   return StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
-    justifyContent: "flex-end",
-  },
-  sheet: {
-    backgroundColor: colors.cardBackground,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    padding: spacing.xxl,
-    paddingBottom: Platform.OS === "ios" ? 40 : spacing.xxl,
-  },
-  handle: {
-    width: 40,
-    height: 4,
-    backgroundColor: colors.divider,
-    borderRadius: 2,
-    alignSelf: "center",
-    marginBottom: spacing.lg,
-  },
+  // Sheet chrome (backdrop, rounded sheet, drag handle) now lives in
+  // DraggableSheet; only the inner content styles remain here.
   title: {
     fontFamily: fonts.bold,
     fontSize: T.size.xl,
@@ -1893,18 +2385,3 @@ function makeSheetStyles(c: ThemeColors) {
   });
 }
 
-const photoStyles = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.96)" },
-  closeBtn: {
-    position: "absolute",
-    top: spacing.xl,
-    right: spacing.screen,
-    zIndex: 10,
-    width: 40,
-    height: 40,
-    borderRadius: radius.full,
-    backgroundColor: "rgba(255,255,255,0.15)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-});

@@ -3,7 +3,7 @@
 // root layout routes them here. Reuses the same email-keyed OTP flow as signup:
 // send a code to the account email, verify it, then mark the account verified.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { MailCheck } from "lucide-react-native";
 import { useCallback } from "react";
 import {
   KeyboardAvoidingView,
@@ -53,11 +53,7 @@ export default function VerifyEmailScreen() {
       >
         <View style={styles.content}>
           <View style={styles.iconWrap}>
-            <MaterialCommunityIcons
-              name="email-check-outline"
-              size={34}
-              color={colors.primary}
-            />
+            <MailCheck size={30} color={colors.textPrimary} strokeWidth={1.8} />
           </View>
           <Text style={styles.title}>Verify your email</Text>
 
@@ -91,26 +87,27 @@ function makeStyles(c: ThemeColors) {
     kav: { flex: 1 },
     content: {
       flex: 1,
-      paddingHorizontal: spacing.xl,
+      paddingHorizontal: spacing.lg,
       paddingTop: spacing.xxxl,
       alignItems: "center",
     },
     iconWrap: {
-      width: 76,
-      height: 76,
+      width: 72,
+      height: 72,
       borderRadius: radius.pill,
-      backgroundColor: colors.primaryLight,
+      backgroundColor: colors.surface,
       alignItems: "center",
       justifyContent: "center",
       marginBottom: spacing.lg,
     },
     title: {
       fontFamily: fonts.black,
-      fontSize: T.size.xxl,
+      fontSize: T.size.title,
       color: colors.textPrimary,
       letterSpacing: T.tracking.tight,
       textAlign: "center",
       marginBottom: spacing.sm,
+      lineHeight: 34,
     },
     signOut: { alignItems: "center", paddingVertical: spacing.lg },
     signOutText: {

@@ -2,10 +2,11 @@
 // Like / unlike reviews.
 //
 // Counter strategy:
-//   The reviews collection only grants Update permission to each review's
-//   own author, so other users can't update likeCount client-side. We
-//   handle this by routing all counter bumps through the send-notification
-//   Appwrite Function, which runs server-side with an API key.
+//   The reviews collection grants NO Update permission to anyone (not even
+//   the author — that would let a tampered client flip isHidden / inflate
+//   counters, since Appwrite doc perms are all-or-nothing). So no client can
+//   update likeCount directly. We route all counter bumps through the
+//   send-notification Appwrite Function, which runs server-side with an API key.
 //
 // Flow on like:
 //   1. Create the review_likes row (source of truth)
@@ -13,12 +14,14 @@
 //
 // Flow on unlike:
 //   1. Delete the review_likes row (source of truth)
-//   2. Attempt client-side decrement (will fail silently for non-authors;
+//   2. Attempt client-side decrement (fails silently — see below;
 //      acceptable drift, reconciled by periodic recount script)
 //
-// We KNOW the unlike decrement fails for other users' reviews. That's a
-// trade-off: full server-side handling would require another Function
-// endpoint. At current scale the drift is acceptable.
+// We KNOW the unlike decrement fails: reviews grant their author no update
+// permission (to protect isHidden / counters — edits go through the Function),
+// so no client can decrement likeCount directly. That's a trade-off: full
+// server-side handling would require another Function endpoint. At current
+// scale the drift is acceptable, and the next like reconciles it.
 //
 // Error handling:
 //   - listLikedReviewsByUser (drives the Likes tab) throws on failure so
@@ -213,9 +216,12 @@ export async function unlikeReview(reviewId: string): Promise<void> {
     throw new ReviewLikeError("Failed to unlike review.");
   }
 
-  // 2. Best-effort client-side decrement. Will fail silently when the
-  // current user isn't the review's author (most cases). Acceptable
-  // drift — reconciled by periodic recount script.
+  // 2. Best-effort client-side decrement. Reviews grant their author no
+  // update permission (edits are routed through the Function to protect
+  // isHidden / counter fields), so this decrement now fails for EVERY user,
+  // authors included. Acceptable drift — reconciled by the periodic recount
+  // script, and any subsequent like resets likeCount to the authoritative
+  // count server-side anyway.
   //
   // We deliberately DON'T captureError here. This failure is EXPECTED
   // by design — flooding Sentry with permission-denied errors on every
@@ -343,16 +349,23 @@ export async function getLikedReviewIds(
  * query — we already have the docs in hand).
  *
  * Returns the same ReviewPage shape as listReviewsByUser so it can slot
- * into the same UI patterns. nextCursor is the reviewLikes row $id, opaque
- * to callers — just pass it back into the next call.
+ * into the same UI patterns, plus `likedAt` — when the user liked each
+ * review — so the Likes tab can merge-sort reviews with liked posts by
+ * like recency. nextCursor is the reviewLikes row $id, opaque to callers —
+ * just pass it back into the next call.
  *
  * Throws on failure. The Likes tab needs to surface this — silently
  * showing an empty tab when the fetch errored is misleading.
  */
+export interface LikedReviewsPage extends ReviewPage {
+  /** ISO time the user liked each review, keyed by review id. */
+  likedAt: Map<string, string>;
+}
+
 export async function listLikedReviewsByUser(
   userId: string,
   options: { pageSize?: number; cursor?: string | null } = {},
-): Promise<ReviewPage> {
+): Promise<LikedReviewsPage> {
   const { pageSize = 20, cursor } = options;
 
   const likeQueries: string[] = [
@@ -377,12 +390,14 @@ export async function listLikedReviewsByUser(
         total: likesRes.total,
         hasMore: false,
         nextCursor: null,
+        likedAt: new Map(),
       };
     }
 
     // Preserve the like-order (most recent first) when we hydrate reviews.
     const reviewIds = likeDocs.map((l) => l.reviewId);
     const lastLikeId = likeDocs[likeDocs.length - 1].$id;
+    const likedAt = new Map(likeDocs.map((l) => [l.reviewId, l.$createdAt]));
 
     // 2. Batch-fetch the corresponding reviews. `Query.equal` on the doc
     // ID accepts an array, so this is one round-trip.
@@ -414,6 +429,7 @@ export async function listLikedReviewsByUser(
       // fine; we still want to keep paginating.
       hasMore: likeDocs.length === pageSize,
       nextCursor: lastLikeId,
+      likedAt,
     };
   } catch (err) {
     captureError(err, {

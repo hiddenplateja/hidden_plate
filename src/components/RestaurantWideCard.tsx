@@ -22,7 +22,7 @@
 // matching layout. The skeleton intentionally has no entrance animation
 // since it's only visible briefly before being replaced.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { MapPin, Star } from "lucide-react-native";
 import { Image } from "expo-image";
 import { memo, useCallback } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -140,7 +140,7 @@ export const RestaurantWideCard = memo(function RestaurantWideCard({
 
         {hasReviews ? (
           <View style={styles.ratingRow}>
-            <MaterialCommunityIcons name="star" size={14} color={STAR_COLOR} />
+            <Star size={13} color={STAR_COLOR} fill={STAR_COLOR} />
             <Text style={styles.ratingValue}>
               {restaurant.averageRating.toFixed(1)}
             </Text>
@@ -172,11 +172,7 @@ export const RestaurantWideCard = memo(function RestaurantWideCard({
                 {locationLine ? (
                   <Text style={styles.locationText}> · </Text>
                 ) : null}
-                <MaterialCommunityIcons
-                  name="map-marker"
-                  size={12}
-                  color={colors.primary}
-                />
+                <MapPin size={12} color={colors.primary} strokeWidth={2.2} />
                 <Text style={styles.distanceText}>{distLabel}</Text>
               </>
             ) : null}

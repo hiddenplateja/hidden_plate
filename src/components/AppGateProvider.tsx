@@ -13,7 +13,7 @@
 // once the fetch resolves — the fetch overlaps the auth/font splash, so a real
 // block lands before the app is interactive. Fail-open lives in remoteConfig.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { CircleArrowUp, Rocket, Wrench, type LucideIcon } from "lucide-react-native";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   AppState,
@@ -62,7 +62,7 @@ export function AppGateProvider({ children }: { children: ReactNode }) {
   if (gate.status === "maintenance") {
     return (
       <BlockScreen
-        icon="wrench-outline"
+        icon={Wrench}
         title="We'll be right back"
         message={gate.message}
         actionLabel="Try again"
@@ -74,7 +74,7 @@ export function AppGateProvider({ children }: { children: ReactNode }) {
   if (gate.status === "update-required") {
     return (
       <BlockScreen
-        icon="rocket-launch-outline"
+        icon={Rocket}
         title="Update required"
         message={gate.message}
         actionLabel="Update now"
@@ -109,7 +109,7 @@ function BlockScreen({
   onAction,
   actionDisabled = false,
 }: {
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: LucideIcon;
   title: string;
   message: string;
   actionLabel: string;
@@ -117,11 +117,12 @@ function BlockScreen({
   actionDisabled?: boolean;
 }) {
   const { styles, colors } = useThemedStyles(makeStyles);
+  const Icon = icon;
   return (
     <SafeAreaView style={styles.blockSafe} edges={["top", "bottom"]}>
       <View style={styles.blockBody}>
         <View style={styles.iconTile}>
-          <MaterialCommunityIcons name={icon} size={40} color={colors.primary} />
+          <Icon size={38} color={colors.primary} strokeWidth={1.8} />
         </View>
         <Text style={styles.blockTitle}>{title}</Text>
         <Text style={styles.blockMessage}>{message}</Text>
@@ -169,11 +170,7 @@ function UpdateAvailableSheet({
       <View style={styles.scrim}>
         <View style={styles.sheet}>
           <View style={styles.iconTileSm}>
-            <MaterialCommunityIcons
-              name="arrow-up-circle-outline"
-              size={28}
-              color={colors.primary}
-            />
+            <CircleArrowUp size={26} color={colors.primary} strokeWidth={2} />
           </View>
           <Text style={styles.sheetTitle}>Update available</Text>
           <Text style={styles.sheetMessage}>{message}</Text>
@@ -292,7 +289,7 @@ function makeStyles(c: ThemeColors) {
     primaryBtnText: {
       fontFamily: fonts.bold,
       fontSize: T.size.base,
-      color: colors.textInverse,
+      color: colors.onPrimary,
     },
     secondaryBtn: {
       height: 48,

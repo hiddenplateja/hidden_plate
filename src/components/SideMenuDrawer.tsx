@@ -6,7 +6,14 @@
 // with tinted icon tiles, and a pinned footer (Sign out). Fully theme-aware —
 // styles are built from the active palette via useTheme().
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import {
+  ChevronRight,
+  Moon,
+  Sun,
+  SunMoon,
+  X,
+  type LucideIcon,
+} from "lucide-react-native";
 import { useMemo } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import Animated, { SlideInRight } from "react-native-reanimated";
@@ -19,7 +26,7 @@ import type { ThemeColors } from "@/theme/themes";
 import type { User } from "@/types/user";
 
 export interface SideMenuItem {
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: LucideIcon;
   label: string;
   onPress: () => void;
   danger?: boolean;
@@ -38,11 +45,11 @@ interface SideMenuDrawerProps {
 const THEME_OPTIONS: {
   mode: ThemeMode;
   label: string;
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: LucideIcon;
 }[] = [
-  { mode: "light", label: "Light", icon: "white-balance-sunny" },
-  { mode: "dark", label: "Dark", icon: "weather-night" },
-  { mode: "system", label: "Auto", icon: "theme-light-dark" },
+  { mode: "light", label: "Light", icon: Sun },
+  { mode: "dark", label: "Dark", icon: Moon },
+  { mode: "system", label: "Auto", icon: SunMoon },
 ];
 
 export function SideMenuDrawer({
@@ -56,33 +63,32 @@ export function SideMenuDrawer({
   const { colors, mode, setMode } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
-  const renderItem = (item: SideMenuItem) => (
-    <Pressable
-      key={item.label}
-      onPress={item.onPress}
-      style={({ pressed }) => [styles.item, pressed && styles.itemPressed]}
-      accessibilityRole="button"
-      accessibilityLabel={item.label}
-    >
-      <View style={[styles.iconTile, item.danger && styles.iconTileDanger]}>
-        <MaterialCommunityIcons
-          name={item.icon}
-          size={20}
-          color={item.danger ? colors.error : colors.primary}
-        />
-      </View>
-      <Text style={[styles.itemLabel, item.danger && styles.itemLabelDanger]}>
-        {item.label}
-      </Text>
-      {!item.danger ? (
-        <MaterialCommunityIcons
-          name="chevron-right"
-          size={20}
-          color={colors.textMuted}
-        />
-      ) : null}
-    </Pressable>
-  );
+  const renderItem = (item: SideMenuItem) => {
+    const Icon = item.icon;
+    return (
+      <Pressable
+        key={item.label}
+        onPress={item.onPress}
+        style={({ pressed }) => [styles.item, pressed && styles.itemPressed]}
+        accessibilityRole="button"
+        accessibilityLabel={item.label}
+      >
+        <View style={[styles.iconTile, item.danger && styles.iconTileDanger]}>
+          <Icon
+            size={19}
+            color={item.danger ? colors.error : colors.primary}
+            strokeWidth={2}
+          />
+        </View>
+        <Text style={[styles.itemLabel, item.danger && styles.itemLabelDanger]}>
+          {item.label}
+        </Text>
+        {!item.danger ? (
+          <ChevronRight size={18} color={colors.textMuted} strokeWidth={2} />
+        ) : null}
+      </Pressable>
+    );
+  };
 
   return (
     <Modal
@@ -107,11 +113,7 @@ export function SideMenuDrawer({
                   accessibilityRole="button"
                   accessibilityLabel="Close menu"
                 >
-                  <MaterialCommunityIcons
-                    name="close"
-                    size={20}
-                    color={colors.textPrimary}
-                  />
+                  <X size={20} color={colors.textPrimary} strokeWidth={2.2} />
                 </Pressable>
               </View>
 
@@ -144,6 +146,7 @@ export function SideMenuDrawer({
                 <View style={styles.segmented}>
                   {THEME_OPTIONS.map((opt) => {
                     const active = mode === opt.mode;
+                    const OptIcon = opt.icon;
                     return (
                       <Pressable
                         key={opt.mode}
@@ -153,10 +156,10 @@ export function SideMenuDrawer({
                         accessibilityState={{ selected: active }}
                         accessibilityLabel={`${opt.label} theme`}
                       >
-                        <MaterialCommunityIcons
-                          name={opt.icon}
-                          size={16}
+                        <OptIcon
+                          size={15}
                           color={active ? colors.primary : colors.textMuted}
+                          strokeWidth={2}
                         />
                         <Text
                           style={[

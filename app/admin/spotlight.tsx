@@ -2,7 +2,7 @@
 // Admin: pin the Spot of the Day (restaurant + optional date + optional plate
 // image) and manage Featured restaurants.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { ChevronRight, Search, UtensilsCrossed } from "lucide-react-native";
 import { Image } from "expo-image";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
@@ -319,7 +319,7 @@ export default function AdminSpotlight() {
                       {busy ? (
                         <ActivityIndicator
                           size="small"
-                          color={colors.textInverse}
+                          color={colors.onPrimary}
                         />
                       ) : (
                         <Text style={styles.pinText}>Pin spot</Text>
@@ -330,11 +330,7 @@ export default function AdminSpotlight() {
               ) : (
                 <>
                   <View style={styles.searchBar}>
-                    <MaterialCommunityIcons
-                      name="magnify"
-                      size={18}
-                      color={colors.textSecondary}
-                    />
+                    <Search size={17} color={colors.textSecondary} strokeWidth={2.2} />
                     <TextInput
                       style={styles.searchInput}
                       value={query}
@@ -359,10 +355,10 @@ export default function AdminSpotlight() {
                       <Text style={styles.resultName} numberOfLines={1}>
                         {r.name}
                       </Text>
-                      <MaterialCommunityIcons
-                        name="chevron-right"
-                        size={18}
+                      <ChevronRight
+                        size={17}
                         color={colors.textMuted}
+                        strokeWidth={2}
                       />
                     </Pressable>
                   ))}
@@ -398,10 +394,10 @@ export default function AdminSpotlight() {
                       />
                     ) : (
                       <View style={[styles.thumb, styles.thumbPlaceholder]}>
-                        <MaterialCommunityIcons
-                          name="silverware-fork-knife"
+                        <UtensilsCrossed
                           size={16}
                           color={colors.textMuted}
+                          strokeWidth={1.8}
                         />
                       </View>
                     )}
@@ -613,7 +609,7 @@ function makeStyles(c: ThemeColors) {
   pinText: {
     fontFamily: fonts.bold,
     fontSize: T.size.sm,
-    color: colors.textInverse,
+    color: colors.onPrimary,
   },
 
   list: {

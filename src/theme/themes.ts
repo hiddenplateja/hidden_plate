@@ -14,10 +14,11 @@ import { colors as lightColors } from "./colors";
 export type ThemeColors = { readonly [K in keyof typeof lightColors]: string };
 
 export const darkColors: ThemeColors = {
-  // Brand — coral brightened a touch so it pops on dark surfaces.
-  primary: "#FF6B5C",
-  primaryDark: "#E94B3C",
-  primaryLight: "#3A211E", // dark coral tint (chips, icon tiles)
+  // Brand — inverted monochrome: white actions on near-black surfaces.
+  primary: "#FFFFFF",
+  primaryDark: "#E4E4E7",
+  primaryLight: "#26272B", // neutral tint (chips, icon tiles)
+  onPrimary: "#0A0A0A", // text/icons on a primary-filled control
 
   // Neutrals
   background: "#121316",
@@ -27,7 +28,7 @@ export const darkColors: ThemeColors = {
   textPrimary: "#F3F4F6",
   textSecondary: "#AAB0BA",
   textMuted: "#787E89",
-  textInverse: "#FFFFFF", // text on the coral primary / on overlays
+  textInverse: "#FFFFFF", // text on dark overlays
 
   // Page surfaces — page is darkest, cards sit slightly above it.
   pageBackground: "#0E0F12",
@@ -38,10 +39,16 @@ export const darkColors: ThemeColors = {
   error: "#F97066",
   errorBg: "#3A1F1D",
   success: "#32D583",
+  successBg: "#132A1E",
   warning: "#FDB022",
+
+  // Controls
+  switchTrack: "#585C64", // mid-gray so the white thumb reads against the dark UI
 
   // Accents
   star: "#FBBF24",
+  accent: "#FF5D52", // brand red brightened so it pops on dark surfaces
+  accentDark: "#E24A3F", // pressed/active state for accent-filled controls
 
   // Misc
   black: "#000000",

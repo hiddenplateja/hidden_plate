@@ -21,8 +21,8 @@
 // with identical layout dimensions. Use in horizontal scrolls while
 // fetching to avoid layout shift when real cards mount.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
+import { MapPin, Star } from "lucide-react-native";
 import { memo, useCallback } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, {
@@ -125,11 +125,7 @@ export const RestaurantSmallCard = memo(function RestaurantSmallCard({
 
         {showDistance ? (
           <View style={styles.distanceBadge}>
-            <MaterialCommunityIcons
-              name="map-marker"
-              size={10}
-              color={colors.primary}
-            />
+            <MapPin size={10} color={colors.primary} strokeWidth={2.4} />
             <Text style={styles.distanceText}>{formatDistance(distance)}</Text>
           </View>
         ) : null}
@@ -142,7 +138,7 @@ export const RestaurantSmallCard = memo(function RestaurantSmallCard({
 
         {hasReviews ? (
           <View style={styles.ratingRow}>
-            <MaterialCommunityIcons name="star" size={14} color={STAR_COLOR} />
+            <Star size={13} color={STAR_COLOR} fill={STAR_COLOR} />
             <Text style={styles.ratingValue}>
               {restaurant.averageRating.toFixed(1)}{" "}
               <Text style={styles.ratingCount}>({restaurant.reviewCount})</Text>

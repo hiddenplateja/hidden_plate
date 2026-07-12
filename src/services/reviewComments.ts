@@ -124,6 +124,22 @@ export async function listCommentsForReview(
   }
 }
 
+/** Fetch a single comment by id. Returns null if missing/deleted. */
+export async function getCommentById(
+  commentId: string,
+): Promise<ReviewComment | null> {
+  try {
+    const doc = await databases.getDocument(
+      appwriteConfig.databaseId,
+      appwriteConfig.collections.reviewComments,
+      commentId,
+    );
+    return mapDoc(doc as unknown as CommentDoc);
+  } catch {
+    return null;
+  }
+}
+
 export async function addComment(
   input: CreateCommentInput,
 ): Promise<ReviewComment> {
@@ -211,6 +227,10 @@ export async function deleteComment(
       { commentCount: next },
     );
   } catch (err) {
+    // Expected: reviews grant their author no update permission (edits are
+    // routed through the Function to protect isHidden / counters), so this
+    // decrement fails for every user. Acceptable drift — reconciled by the
+    // recount script, and the next comment resets the count server-side.
     console.warn("[comments] commentCount decrement failed (expected):", err);
   }
 }

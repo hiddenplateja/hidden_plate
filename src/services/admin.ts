@@ -37,6 +37,9 @@ export interface AdminStats {
   reviews: number;
   users: number;
   reports: number;
+  commentReports: number;
+  postReports: number;
+  postCommentReports: number;
   claims: number;
 }
 
@@ -47,6 +50,9 @@ const EMPTY_STATS: AdminStats = {
   reviews: 0,
   users: 0,
   reports: 0,
+  commentReports: 0,
+  postReports: 0,
+  postCommentReports: 0,
   claims: 0,
 };
 
@@ -81,6 +87,9 @@ export async function getAdminStats(): Promise<AdminStats> {
       reviews,
       users,
       reports,
+      commentReports,
+      postReports,
+      postCommentReports,
       claims,
     ] = await Promise.all([
       countDocuments(collections.restaurants),
@@ -88,6 +97,9 @@ export async function getAdminStats(): Promise<AdminStats> {
       countDocuments(collections.reviews),
       countDocuments(collections.users),
       countDocuments(collections.reviewReports),
+      countDocuments(collections.commentReports),
+      countDocuments(collections.postReports),
+      countDocuments(collections.postCommentReports),
       countDocuments(collections.restaurantClaims, [
         Query.equal("status", "pending"),
       ]),
@@ -99,6 +111,9 @@ export async function getAdminStats(): Promise<AdminStats> {
       reviews,
       users,
       reports,
+      commentReports,
+      postReports,
+      postCommentReports,
       claims,
     };
   } catch {

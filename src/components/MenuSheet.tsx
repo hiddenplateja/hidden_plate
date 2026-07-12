@@ -2,7 +2,7 @@
 // Bottom-sheet modal that displays a restaurant's menu — sections, each with
 // its dish names. Opened from the restaurant detail screen's "View menu" button.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { X } from "lucide-react-native";
 import {
   Modal,
   Pressable,
@@ -59,11 +59,7 @@ export function MenuSheet({
               accessibilityRole="button"
               accessibilityLabel="Close menu"
             >
-              <MaterialCommunityIcons
-                name="close"
-                size={22}
-                color={colors.textPrimary}
-              />
+              <X size={21} color={colors.textPrimary} strokeWidth={2.2} />
             </Pressable>
           </View>
 

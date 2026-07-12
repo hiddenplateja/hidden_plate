@@ -3,7 +3,7 @@
 // Reached from the Saved tab header. Cover images are hydrated here and passed
 // to ListCard.
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { ArrowLeft, CloudOff, Library, Plus } from "lucide-react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import {
@@ -85,11 +85,7 @@ export default function MyCollectionsScreen() {
         hitSlop={10}
         style={styles.backBtn}
       >
-        <MaterialCommunityIcons
-          name="arrow-left"
-          size={24}
-          color={colors.textPrimary}
-        />
+        <ArrowLeft size={22} color={colors.textPrimary} strokeWidth={2.2} />
       </Pressable>
       <Text style={styles.topTitle}>My Collections</Text>
       <Pressable
@@ -99,7 +95,7 @@ export default function MyCollectionsScreen() {
         accessibilityRole="button"
         accessibilityLabel="New collection"
       >
-        <MaterialCommunityIcons name="plus" size={26} color={colors.primary} />
+        <Plus size={24} color={colors.primary} strokeWidth={2.2} />
       </Pressable>
     </View>
   );
@@ -121,7 +117,7 @@ export default function MyCollectionsScreen() {
         {header}
         <ErrorState
           variant="screen"
-          icon="cloud-off-outline"
+          icon={CloudOff}
           title="Couldn't load your collections"
           body="Check your connection and try again."
           onRetry={() => load()}
@@ -157,11 +153,7 @@ export default function MyCollectionsScreen() {
         ListEmptyComponent={
           <View style={styles.empty}>
             <View style={styles.emptyIconWrap}>
-              <MaterialCommunityIcons
-                name="bookmark-multiple-outline"
-                size={32}
-                color={colors.primary}
-              />
+              <Library size={30} color={colors.textPrimary} strokeWidth={1.8} />
             </View>
             <Text style={styles.emptyTitle}>No collections yet</Text>
             <Text style={styles.emptyBody}>
@@ -173,11 +165,7 @@ export default function MyCollectionsScreen() {
               style={styles.createBtn}
               accessibilityRole="button"
             >
-              <MaterialCommunityIcons
-                name="plus"
-                size={18}
-                color={colors.textInverse}
-              />
+              <Plus size={17} color={colors.onPrimary} strokeWidth={2.2} />
               <Text style={styles.createText}>New collection</Text>
             </Pressable>
           </View>
@@ -222,7 +210,7 @@ function makeStyles(c: ThemeColors) {
       width: 72,
       height: 72,
       borderRadius: radius.full,
-      backgroundColor: colors.primaryLight,
+      backgroundColor: colors.surface,
       alignItems: "center",
       justifyContent: "center",
     },
@@ -252,7 +240,7 @@ function makeStyles(c: ThemeColors) {
     createText: {
       fontFamily: fonts.bold,
       fontSize: T.size.base,
-      color: colors.textInverse,
+      color: colors.onPrimary,
     },
   });
 }
