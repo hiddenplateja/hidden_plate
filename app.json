@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "hidden_plate",
+    "name": "Hidden Plate",
     "slug": "hidden_plate",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -9,7 +9,7 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "com.hiddenplate.app",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
