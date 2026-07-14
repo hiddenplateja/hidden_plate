@@ -5,7 +5,10 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/hiddenplatelogo.png",
-    "scheme": ["hiddenplate", "appwrite-callback-69fe8b7f003e6deb2878"],
+    "scheme": [
+      "hiddenplate",
+      "appwrite-callback-69fe8b7f003e6deb2878"
+    ],
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
