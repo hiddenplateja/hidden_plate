@@ -38,7 +38,11 @@ import {
 import { useFonts } from "expo-font";
 
 export function useAppFonts(): boolean {
-  const [loaded] = useFonts({
+  // Capture the error slot too: if a bundled font fails to load in a release
+  // build, `loaded` stays false forever — which would hang the app on the
+  // splash screen. Treat an error as "done" (the app falls back to system
+  // fonts) so startup can never deadlock on font loading.
+  const [loaded, error] = useFonts({
     // Inter
     Inter_400Regular,
     Inter_500Medium,
@@ -60,5 +64,5 @@ export function useAppFonts(): boolean {
     Roboto_700Bold,
     Roboto_900Black,
   });
-  return loaded;
+  return loaded || error != null;
 }

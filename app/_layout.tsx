@@ -20,8 +20,9 @@ import * as Sentry from "@sentry/react-native";
 import { defaultShouldDehydrateQuery } from "@tanstack/react-query";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { Stack, useRouter, useSegments } from "expo-router";
+import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
@@ -56,6 +57,12 @@ import { ThemeProvider, useTheme } from "@/theme/ThemeProvider";
 // If EXPO_PUBLIC_SENTRY_DSN is missing, Sentry is effectively disabled —
 // no crashes, no quota burn. Useful for local dev where you don't want
 // noise in the dashboard.
+// Keep the native splash up until we're ready to render — but never trust that
+// "ready" always arrives. The failsafe below (RootNavigator) force-opens the
+// gate after a few seconds so a stalled font load or a hung session-restore
+// network call can't strand the user on the splash forever.
+SplashScreen.preventAutoHideAsync().catch(() => {});
+
 Sentry.init({
   dsn: process.env.EXPO_PUBLIC_SENTRY_DSN,
   sendDefaultPii: true,
@@ -121,6 +128,25 @@ function RootNavigator() {
   const router = useRouter();
   const { colors } = useTheme();
 
+  // Failsafe: if the session check or font load hasn't settled within a few
+  // seconds, proceed anyway rather than sitting on the splash indefinitely.
+  // A slow/hung startup then falls through to the login gate (a null user is
+  // treated as signed-out) instead of a dead app.
+  const [startupTimedOut, setStartupTimedOut] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setStartupTimedOut(true), 6000);
+    return () => clearTimeout(t);
+  }, []);
+
+  const booting = (isLoading || !fontsLoaded) && !startupTimedOut;
+
+  // Once we stop gating, hand the native splash off explicitly. expo-router
+  // also hides it when the Stack mounts; calling it here too is idempotent and
+  // covers the timeout path.
+  useEffect(() => {
+    if (!booting) SplashScreen.hideAsync().catch(() => {});
+  }, [booting]);
+
   useEffect(() => {
     if (isLoading) return; // wait for session check
 
@@ -151,9 +177,10 @@ function RootNavigator() {
     }
   }, [user, isAuthenticated, isLoading, needsOnboarding, segments, router]);
 
-  // Wait for both auth check AND fonts before rendering screens.
-  // This prevents fonts popping in after content already drew with system fallback.
-  if (isLoading || !fontsLoaded) {
+  // Wait for both auth check AND fonts before rendering screens (up to the
+  // failsafe timeout). This prevents fonts popping in after content already
+  // drew with system fallback.
+  if (booting) {
     return (
       <View style={[styles.splash, { backgroundColor: colors.background }]}>
         <ActivityIndicator size="large" color={colors.primary} />

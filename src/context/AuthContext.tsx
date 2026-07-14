@@ -53,7 +53,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
     let cancelled = false;
     (async () => {
       try {
-        const me = await authService.getCurrentUser();
+        // Time-box the session restore. account.get() normally resolves fast
+        // (401 when signed out), but a hung network call must not strand the
+        // app on the splash — fall back to "signed out" and let the user in.
+        const me = await Promise.race([
+          authService.getCurrentUser(),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
+        ]);
         if (cancelled) return;
         setUser(me);
         // Tag subsequent Sentry errors with this user. Restored sessions
