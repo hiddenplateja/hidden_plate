@@ -311,18 +311,28 @@ export async function removeFromList(
 /**
  * A list plus its hydrated restaurants, in list order. Missing restaurants
  * (deleted) are simply skipped. Throws if the list itself can't be loaded;
- * restaurant hydration is tolerant.
+ * restaurant hydration is tolerant. Review statistics are fetched alongside
+ * the restaurant docs because the denormalized rating fields on a restaurant
+ * are not client-maintained; this keeps collection cards accurate.
  */
 export async function getListWithRestaurants(
   id: string,
 ): Promise<{ list: List; restaurants: Restaurant[] }> {
   const list = await getList(id);
   if (list.restaurantIds.length === 0) return { list, restaurants: [] };
-  // Inline import to avoid a circular dependency at module load.
-  const { getRestaurantsByIds } = await import("@/services/restaurants");
+  // Inline imports avoid circular dependencies at module load.
+  const [{ getRestaurantsByIds }, { getReviewStatsForRestaurants }] =
+    await Promise.all([
+      import("@/services/restaurants"),
+      import("@/services/reviews"),
+    ]);
   let map: Map<string, Restaurant> = new Map();
+  let reviewStats = new Map<string, { count: number; average: number }>();
   try {
-    map = await getRestaurantsByIds(list.restaurantIds);
+    [map, reviewStats] = await Promise.all([
+      getRestaurantsByIds(list.restaurantIds),
+      getReviewStatsForRestaurants(list.restaurantIds),
+    ]);
   } catch (err) {
     captureError(err, {
       service: "lists",
@@ -331,7 +341,17 @@ export async function getListWithRestaurants(
     });
   }
   const restaurants = list.restaurantIds
-    .map((rid) => map.get(rid))
+    .map((rid) => {
+      const restaurant = map.get(rid);
+      const stats = reviewStats.get(rid);
+      return restaurant && stats
+        ? {
+            ...restaurant,
+            reviewCount: stats.count,
+            averageRating: stats.average,
+          }
+        : restaurant;
+    })
     .filter((r): r is Restaurant => r != null);
   return { list, restaurants };
 }
