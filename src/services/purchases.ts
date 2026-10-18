@@ -14,6 +14,7 @@
 
 import { Platform } from "react-native";
 
+import { PAID_FEATURES_ENABLED } from "@/constants/features";
 import { captureError } from "@/services/sentry";
 
 export type CheckoutResult =
@@ -30,7 +31,8 @@ function platformKey(): string {
 
 /** Whether RevenueCat is configured for this platform (gates the pay action). */
 export function revenueCatConfigured(): boolean {
-  return !!platformKey();
+  // Stored/EAS keys must not activate checkout in the free launch build.
+  return PAID_FEATURES_ENABLED && !!platformKey();
 }
 
 // Tracks which Appwrite user the SDK is currently identified as, so we only

@@ -17,8 +17,6 @@
 //   - No way to bypass via deep link
 
 import * as Sentry from "@sentry/react-native";
-import { defaultShouldDehydrateQuery } from "@tanstack/react-query";
-import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { Stack, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
@@ -33,7 +31,7 @@ import { BadgeCelebrationProvider } from "@/components/BadgeCelebrationProvider"
 import { NotificationProvider } from "@/components/NotificationProvider";
 import { AuthProvider } from "@/context/AuthContext";
 import { useAuth } from "@/hooks/useAuth";
-import { asyncStoragePersister, queryClient } from "@/lib/queryClient";
+import { BackendQueryProvider } from "@/components/BackendQueryProvider";
 import { emailVerificationEnabled } from "@/services/auth";
 import { useAppFonts } from "@/theme/fonts";
 import { ThemeProvider, useTheme } from "@/theme/ThemeProvider";
@@ -81,20 +79,7 @@ export default Sentry.wrap(function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <KeyboardProvider>
         <SafeAreaProvider>
-          <PersistQueryClientProvider
-          client={queryClient}
-          persistOptions={{
-            persister: asyncStoragePersister,
-            maxAge: 24 * 60 * 60 * 1000,
-            dehydrateOptions: {
-              // Skip queries that opt out (meta.persist === false) — e.g. the
-              // restaurant-detail query, whose Maps/Sets don't survive JSON.
-              shouldDehydrateQuery: (query) =>
-                query.meta?.persist !== false &&
-                defaultShouldDehydrateQuery(query),
-            },
-          }}
-        >
+          <BackendQueryProvider>
           <ThemeProvider>
             <AppGateProvider>
               <AuthProvider>
@@ -107,7 +92,7 @@ export default Sentry.wrap(function RootLayout() {
               </AuthProvider>
             </AppGateProvider>
           </ThemeProvider>
-          </PersistQueryClientProvider>
+          </BackendQueryProvider>
         </SafeAreaProvider>
       </KeyboardProvider>
     </GestureHandlerRootView>

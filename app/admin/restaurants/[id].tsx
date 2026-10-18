@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AdminHeader } from "@/components/admin/AdminHeader";
+import { useAccountActionScope } from "@/hooks/useAccountActionScope";
 import {
   RestaurantForm,
   type RestaurantFormValues,
@@ -30,6 +31,7 @@ import type { Restaurant } from "@/types/restaurant";
 export default function AdminEditRestaurant() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const beginAction = useAccountActionScope();
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [loading, setLoading] = useState(true);
   const { styles, colors } = useThemedStyles(makeStyles);
@@ -62,16 +64,18 @@ export default function AdminEditRestaurant() {
   const handleSubmit = useCallback(
     async (values: RestaurantFormValues) => {
       if (!id) return;
-      await updateRestaurant(id, values);
+      const action = beginAction(); action.assertCurrent();
+      await action.run(() => updateRestaurant(id, values));
       Alert.alert("Saved", "Your changes have been saved.", [
-        { text: "Done", onPress: () => router.back() },
+        { text: "Done", onPress: () => { if (action.isCurrent()) router.back(); } },
       ]);
     },
-    [id, router],
+    [id, router, beginAction],
   );
 
   const handleDelete = useCallback(() => {
     if (!id) return;
+    const action = beginAction(); if (!action.isCurrent()) return;
     Alert.alert(
       "Delete restaurant?",
       "This permanently removes the listing and its photos. This can't be undone.",
@@ -82,9 +86,10 @@ export default function AdminEditRestaurant() {
           style: "destructive",
           onPress: async () => {
             try {
-              await deleteRestaurant(id);
+              await action.run(() => deleteRestaurant(id));
               router.back();
             } catch (err) {
+              if (!action.isCurrent()) return;
               Alert.alert(
                 "Couldn't delete",
                 err instanceof Error ? err.message : "Try again.",
@@ -94,7 +99,7 @@ export default function AdminEditRestaurant() {
         },
       ],
     );
-  }, [id, router]);
+  }, [id, router, beginAction]);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>

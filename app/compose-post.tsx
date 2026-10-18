@@ -28,6 +28,8 @@ import {
   type PickedPhoto,
 } from "@/components/ImagePickerField";
 import { useAuth } from "@/hooks/useAuth";
+import { useAccountActionScope } from "@/hooks/useAccountActionScope";
+import { uploadAccountPhotos } from "@/utils/accountPhotoUpload";
 import {
   createPost,
   POST_MAX_IMAGES,
@@ -45,6 +47,7 @@ import { useThemedStyles } from "@/theme/useThemedStyles";
 export default function ComposePostScreen() {
   const router = useRouter();
   const { user } = useAuth();
+  const beginAction = useAccountActionScope();
   const { styles, colors } = useThemedStyles(makeStyles);
 
   const [text, setText] = useState("");
@@ -56,10 +59,11 @@ export default function ComposePostScreen() {
   const canPost = text.trim().length > 0 && !overLimit && !submitting;
 
   const handleClose = () => {
+    const action = beginAction(); if (!action.isCurrent()) return;
     if (text.trim().length > 0 || photos.length > 0) {
       Alert.alert("Discard post?", "Your draft won't be saved.", [
         { text: "Keep editing", style: "cancel" },
-        { text: "Discard", style: "destructive", onPress: () => router.back() },
+        { text: "Discard", style: "destructive", onPress: () => { if (action.isCurrent()) router.back(); } },
       ]);
       return;
     }
@@ -68,26 +72,19 @@ export default function ComposePostScreen() {
 
   const handleSubmit = async () => {
     if (!canPost) return;
+    const action = beginAction(); if (!action.isCurrent()) return;
     setSubmitting(true);
 
-    const uploadedIds: string[] = [];
     try {
       // Upload photos first — if one fails partway, delete what already went
       // up so we don't strand orphan files in the bucket.
-      try {
-        for (const photo of photos) {
-          const compressed = await compressImage(photo.uri);
-          const id = await uploadPostImage(compressed);
-          uploadedIds.push(id);
-        }
-      } catch (err) {
-        await Promise.all(uploadedIds.map((id) => deleteImage(id)));
-        throw err;
-      }
-
-      await createPost({ text, imageIds: uploadedIds });
+      const uploadedIds = await uploadAccountPhotos(action, photos, {
+        compress: compressImage, upload: uploadPostImage, remove: deleteImage,
+      });
+      await action.run(() => createPost({ text, imageIds: uploadedIds }));
       router.back();
     } catch (err) {
+      if (!action.isCurrent()) { if (action.canUpdate()) setSubmitting(false); return; }
       Alert.alert(
         "Couldn't post",
         err instanceof Error ? err.message : "Something went wrong. Try again.",

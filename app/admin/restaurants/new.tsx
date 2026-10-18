@@ -12,21 +12,24 @@ import {
   type RestaurantFormValues,
 } from "@/components/RestaurantForm";
 import { adminCreateRestaurant } from "@/services/restaurants";
+import { useAccountActionScope } from "@/hooks/useAccountActionScope";
 import type { ThemeColors } from "@/theme/themes";
 import { useThemedStyles } from "@/theme/useThemedStyles";
 
 export default function AdminNewRestaurant() {
   const router = useRouter();
+  const beginAction = useAccountActionScope();
   const { styles } = useThemedStyles(makeStyles);
 
   const handleSubmit = useCallback(
     async (values: RestaurantFormValues) => {
-      await adminCreateRestaurant(values);
+      const action = beginAction(); action.assertCurrent();
+      await action.run(() => adminCreateRestaurant(values));
       Alert.alert("Restaurant created", "It's now in your list.", [
-        { text: "Done", onPress: () => router.back() },
+        { text: "Done", onPress: () => { if (action.isCurrent()) router.back(); } },
       ]);
     },
-    [router],
+    [router, beginAction],
   );
 
   return (

@@ -20,6 +20,8 @@
 // tampered client can at most feature a restaurant it actually owns, after a
 // real (RevenueCat-verified) purchase.
 
+import { finishMediaJob,handleAdminMediaCleanup,mediaRpc } from "./mediaCleanup";
+
 export interface Env {
 	// vars (wrangler.jsonc)
 	APPWRITE_ENDPOINT: string;
@@ -32,6 +34,9 @@ export interface Env {
 	EMAIL_OTPS_COLLECTION_ID: string;
 	RESEND_FROM: string; // e.g. "Hidden Plate <verify@yourdomain.com>"
 	OTP_TTL_MINUTES: string; // e.g. "10"
+	SUPABASE_URL: string;
+	SUPABASE_PUBLISHABLE_KEY: string;
+	MEDIA: R2Bucket;
 	// secrets (wrangler secret put / .dev.vars)
 	APPWRITE_API_KEY: string;
 	// The Authorization header value you set on the RevenueCat webhook.
@@ -112,6 +117,10 @@ export default {
 			if (url.pathname === "/restaurant/submit" && request.method === "POST") {
 				return handleRestaurantSubmit(request, env);
 			}
+			if (url.pathname === "/media/cleanup") return await handleAdminMediaCleanup(request,env);
+			if (url.pathname.startsWith("/media/")) {
+				return await handleMedia(request, env, url);
+			}
 			return text("Not found", 404);
 		} catch (err) {
 			console.error("worker error", err);
@@ -119,6 +128,104 @@ export default {
 		}
 	},
 } satisfies ExportedHandler<Env>;
+
+// ── /media/* (Cloudflare R2) ───────────────────────────────────────
+// Images are publicly readable because the app displays restaurant, review,
+// post and avatar photos without a signed URL. Writes and deletes are always
+// authenticated against Supabase Auth; an account can only touch its own key
+// namespace: <type>/<user-id>/<random-file-name>.
+
+const MEDIA_TYPES = new Set(["rest", "rev", "usr", "post"]);
+const MEDIA_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const MAX_MEDIA_BYTES = 10 * 1024 * 1024;
+
+function mediaKey(url: URL): string | null {
+	let raw:string;
+	try { raw=decodeURIComponent(url.pathname.slice("/media/".length)); } catch { return null; }
+	if (!raw || raw.includes("..") || raw.includes("\\") || raw.startsWith("/")) {
+		return null;
+	}
+	const parts = raw.split("/");
+	if (parts.length !== 3 || !MEDIA_TYPES.has(parts[0]) || !parts[1] || !parts[2]) {
+		return null;
+	}
+	return raw;
+}
+
+async function supabaseUserId(request: Request, env: Env): Promise<string | null> {
+	const authorization = request.headers.get("authorization") ?? "";
+	if (!authorization.startsWith("Bearer ")) return null;
+	const response = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, {
+		headers: {
+			authorization,
+			apikey: env.SUPABASE_PUBLISHABLE_KEY,
+		},
+	});
+	if (!response.ok) return null;
+	const user = (await response.json()) as { id?: unknown };
+	return typeof user.id === "string" ? user.id : null;
+}
+
+async function handleMedia(request: Request, env: Env, url: URL): Promise<Response> {
+	const key = mediaKey(url);
+	if (!key) return text("Not found", 404);
+
+	if (request.method === "GET" || request.method === "HEAD") {
+		const object = await env.MEDIA.get(key, { range: request.headers });
+		if (!object) return text("Not found", 404);
+		const headers = new Headers();
+		object.writeHttpMetadata(headers);
+		headers.set("etag", object.httpEtag);
+		headers.set("cache-control", "public, max-age=31536000, immutable");
+		return new Response(request.method === "HEAD" || !("body" in object) ? undefined : object.body, {
+			status: "body" in object ? 200 : 412,
+			headers,
+		});
+	}
+
+	if (request.method !== "PUT" && request.method !== "DELETE") {
+		return new Response("Method Not Allowed", {
+			status: 405,
+			headers: { Allow: "GET, HEAD, PUT, DELETE" },
+		});
+	}
+
+	const userId = await supabaseUserId(request, env);
+	if (!userId || key.split("/")[1] !== userId) return text("Unauthorized", 401);
+
+	if (request.method === "DELETE") {
+		const claimed=await mediaRpc(request,env,"claim_my_media_cleanup",{ object_key:key });
+		if (!claimed.ok) return text("Image is in use or deletion is unavailable",claimed.status>=500 ? 503 : 409);
+		if (claimed.data?.done) return new Response(null,{ status:204 });
+		if (!(await finishMediaJob(request,env,claimed.data))) return text("Image cleanup will need a retry",503);
+		return new Response(null,{ status:204 });
+	}
+	const allowed=await mediaRpc(request,env,"media_upload_allowed",{ object_key:key });
+	if (!allowed.ok || allowed.data!==true) return text("Upload unavailable for this account or key",403);
+
+	const contentType = request.headers.get("content-type")?.split(";")[0].toLowerCase() ?? "";
+	const contentLength = Number(request.headers.get("content-length") ?? "0");
+	if (!MEDIA_CONTENT_TYPES.has(contentType)) return text("Unsupported media type", 415);
+	if (!request.body || !Number.isFinite(contentLength) || contentLength <= 0 || contentLength > MAX_MEDIA_BYTES) {
+		return text("Image must be 10 MB or smaller", 413);
+	}
+
+	const stored=await env.MEDIA.put(key, request.body, {
+		onlyIf: new Headers({ "if-none-match":"*" }),
+		httpMetadata: { contentType },
+	});
+	if (!stored) return text("Upload a new image instead of overwriting an existing key",409);
+	// Cleanup may have retired the key while the upload was in flight. New
+	// database references are blocked by its tombstone, so this delete is safe.
+	const retired=await mediaRpc(request,env,"media_upload_retired",{ object_key:key });
+	if (!retired.ok) return text("Upload confirmation unavailable. Please retry with a new image",503);
+	if (retired.data===true) {
+		await env.MEDIA.delete(key);
+		return text("This image key was retired. Upload a new image",409);
+	}
+	if (retired.data!==false) return text("Upload confirmation unavailable",503);
+	return json({ key }, 201);
+}
 
 // ── /revenuecat/webhook ─────────────────────────────────────────────
 // RevenueCat POSTs purchase events here. We only act on one-time (consumable)

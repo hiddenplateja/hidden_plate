@@ -15,8 +15,11 @@ import * as authService from "@/services/auth";
 import { clearUser, identifyUser } from "@/services/sentry";
 import { getUserPreferences } from "@/services/userPreferences";
 import type { LoginInput, SignupInput, User } from "@/types/user";
+import { restoreAuthSnapshot, SIGNED_OUT_SNAPSHOT } from "@/utils/authSession";
+import { getRuntimeBackend } from "@/services/backendRuntime";
+import { ScopedSupabaseAuthProvider } from "@/context/ScopedSupabaseAuthProvider";
 
-interface AuthContextValue {
+export interface AuthContextValue {
   user: User | null;
   isLoading: boolean;
   isAuthenticated: boolean;
@@ -43,6 +46,11 @@ interface AuthProviderProps {
 }
 
 export function AuthProvider({ children }: AuthProviderProps) {
+  return getRuntimeBackend() === "supabase" ? <ScopedSupabaseAuthProvider>{children}</ScopedSupabaseAuthProvider>
+    : <AppwriteAuthProvider>{children}</AppwriteAuthProvider>;
+}
+
+function AppwriteAuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -53,31 +61,27 @@ export function AuthProvider({ children }: AuthProviderProps) {
     let cancelled = false;
     (async () => {
       try {
-        // Time-box the session restore. account.get() normally resolves fast
-        // (401 when signed out), but a hung network call must not strand the
-        // app on the splash — fall back to "signed out" and let the user in.
-        const me = await Promise.race([
-          authService.getCurrentUser(),
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
-        ]);
+        // Bound the ENTIRE restore, including admin and preferences. This
+        // shared contract is also used by the staged Supabase session loader.
+        const snapshot = await restoreAuthSnapshot(async () => {
+          const me = await authService.getCurrentUser();
+          if (!me) return { ...SIGNED_OUT_SNAPSHOT };
+          const [admin, prefs] = await Promise.all([
+            checkIsAdmin(), getUserPreferences(),
+          ]);
+          return { user: me, isAdmin: admin, needsOnboarding: prefs.onboardingPending };
+        });
         if (cancelled) return;
-        setUser(me);
+        setUser(snapshot.user);
+        setIsAdmin(snapshot.isAdmin);
+        setNeedsOnboarding(snapshot.needsOnboarding);
         // Tag subsequent Sentry errors with this user. Restored sessions
         // count — if a user reopens the app and something crashes, we
         // want to know it was them.
-        if (me) {
-          identifyUser({ id: me.id, username: me.username });
-          // Resolve admin status before clearing isLoading so the /admin
-          // gate has a settled value on app reopen.
-          const admin = await checkIsAdmin();
-          if (!cancelled) setIsAdmin(admin);
-          // Onboarding flag (set at signup) — gates a fresh account into the
-          // onboarding flow, even if the app was killed mid-onboarding.
-          const prefs = await getUserPreferences();
-          if (!cancelled) setNeedsOnboarding(prefs.onboardingPending);
+        if (snapshot.user) {
+          identifyUser({ id: snapshot.user.id, username: snapshot.user.username });
         } else {
-          setIsAdmin(false);
-          setNeedsOnboarding(false);
+          clearUser();
         }
       } catch {
         if (!cancelled) {

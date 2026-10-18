@@ -6,8 +6,10 @@
 // Stores only display info (name/email/photo) + which provider. No tokens.
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getRuntimeBackend, getRuntimeCacheNamespace } from "@/services/backendRuntime";
 
 const KEY = "@hp_last_oauth";
+const storageKey = () => getRuntimeBackend() === "appwrite" ? KEY : `${getRuntimeCacheNamespace()}:last-oauth`;
 
 export interface LastOAuth {
   provider: "google" | "apple";
@@ -19,7 +21,7 @@ export interface LastOAuth {
 
 export async function getLastOAuth(): Promise<LastOAuth | null> {
   try {
-    const raw = await AsyncStorage.getItem(KEY);
+    const raw = await AsyncStorage.getItem(storageKey());
     if (!raw) return null;
     const v = JSON.parse(raw) as Partial<LastOAuth>;
     if (v && (v.provider === "google" || v.provider === "apple")) {
@@ -38,7 +40,7 @@ export async function getLastOAuth(): Promise<LastOAuth | null> {
 
 export async function setLastOAuth(value: LastOAuth): Promise<void> {
   try {
-    await AsyncStorage.setItem(KEY, JSON.stringify(value));
+    await AsyncStorage.setItem(storageKey(), JSON.stringify(value));
   } catch {
     // best-effort — a missed convenience shortcut is harmless
   }
@@ -46,7 +48,7 @@ export async function setLastOAuth(value: LastOAuth): Promise<void> {
 
 export async function clearLastOAuth(): Promise<void> {
   try {
-    await AsyncStorage.removeItem(KEY);
+    await AsyncStorage.removeItem(storageKey());
   } catch {
     // ignore
   }

@@ -35,6 +35,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Avatar } from "@/components/Avatar";
 import { useAuth } from "@/hooks/useAuth";
+import { useAccountActionScope } from "@/hooks/useAccountActionScope";
 import { compressAvatar, deleteImage, uploadAvatar } from "@/services/storage";
 import {
     getUserPreferences,
@@ -75,6 +76,7 @@ type AvatarState =
 export default function EditProfileScreen() {
   const router = useRouter();
   const { user, refresh } = useAuth();
+  const beginAction = useAccountActionScope();
   const { styles, colors } = useThemedStyles(makeStyles);
 
   const [loading, setLoading] = useState(true);
@@ -242,6 +244,7 @@ export default function EditProfileScreen() {
 
   const handleSave = useCallback(async () => {
     if (!profile) return;
+    const action = beginAction(); if (!action.isCurrent()) return;
 
     const trimmedName = displayName.trim();
     const trimmedUsername = username.trim().toLowerCase();
@@ -284,8 +287,8 @@ export default function EditProfileScreen() {
       let fileIdToDelete: string | null = null;
 
       if (avatarState.kind === "replaced") {
-        const compressed = await compressAvatar(avatarState.localUri);
-        newAvatarFileId = await uploadAvatar(compressed);
+        const compressed = await action.run(() => compressAvatar(avatarState.localUri));
+        newAvatarFileId = await action.run(() => uploadAvatar(compressed));
         fileIdToDelete = avatarState.oldFileId;
       } else if (avatarState.kind === "cleared") {
         newAvatarFileId = null;
@@ -295,14 +298,14 @@ export default function EditProfileScreen() {
 
       // Update the profile doc — only send the name fields that changed (so a
       // locked-but-untouched field is never written).
-      await updateMyProfile({
+      await action.run(() => updateMyProfile({
         ...(usernameChanged ? { username: trimmedUsername } : {}),
         ...(nameChanged ? { displayName: trimmedName } : {}),
         bio: bio.trim() || null,
         ...(newAvatarFileId !== undefined
           ? { avatarUrl: newAvatarFileId }
           : {}),
-      });
+      }));
 
       // Record the change timestamps (starts the cooldown). Best-effort: the
       // profile already saved, so a prefs hiccup just means the soft limit
@@ -310,40 +313,44 @@ export default function EditProfileScreen() {
       if (usernameChanged || nameChanged) {
         const nowIso = new Date().toISOString();
         try {
-          await updateUserPreferences({
+          await action.run(() => updateUserPreferences({
             ...(usernameChanged ? { usernameChangedAt: nowIso } : {}),
             ...(nameChanged ? { displayNameChangedAt: nowIso } : {}),
-          });
+          }));
         } catch {
           // soft limit — ignore
         }
       }
 
+      action.assertCurrent();
+
       // Best-effort: delete the old avatar file after the update succeeded.
       // If this fails, leave an orphan — better than failing the save.
       if (fileIdToDelete) {
-        deleteImage(fileIdToDelete).catch(() => {
+        action.run(() => deleteImage(fileIdToDelete!)).catch(() => {
           // Swallow — orphan cleanup is non-critical
         });
       }
 
       // Propagate the new username/display name to the rest of the app.
       try {
-        await refresh();
+        await action.run(refresh);
       } catch {
         // non-fatal — other screens refetch on focus
       }
 
-      router.back();
+      action.assertCurrent(); router.back();
     } catch (err) {
+      if (!action.isCurrent()) return;
       Alert.alert(
         "Couldn't save",
         err instanceof Error ? err.message : "Try again.",
       );
     } finally {
-      setSaving(false);
+      if (action.canUpdate()) setSaving(false);
     }
   }, [
+    beginAction,
     profile,
     username,
     displayName,

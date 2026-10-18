@@ -86,7 +86,7 @@ import {
   useRestaurantDetail,
   type RestaurantDetailData,
 } from "@/hooks/useRestaurantDetail";
-import { queryClient } from "@/lib/queryClient";
+import { useQueryClient } from "@tanstack/react-query";
 import { blockUser, getHiddenUserIds } from "@/services/blocks";
 import { listsEnabled } from "@/services/lists";
 import { reportReview } from "@/services/reports";
@@ -206,6 +206,7 @@ const LIST_TYPE_CONFIG: Record<
 const REVIEWS_PREVIEW = 3;
 
 export default function RestaurantDetailScreen() {
+  const queryClient = useQueryClient();
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { user } = useAuth();
@@ -225,7 +226,7 @@ export default function RestaurantDetailScreen() {
         (prev) => (prev ? updater(prev) : prev),
       );
     },
-    [id],
+    [id, queryClient],
   );
   const [likeBusy, setLikeBusy] = useState<Set<string>>(new Set());
   const [saveBusy, setSaveBusy] = useState(false);

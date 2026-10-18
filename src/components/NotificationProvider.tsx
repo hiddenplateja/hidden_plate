@@ -24,6 +24,10 @@ import {
 } from "react";
 
 import { useAuth } from "@/hooks/useAuth";
+import { getRuntimeBackend } from "@/services/backendRuntime";
+import { verifySupabasePushEvent } from "@/services/supabasePushEvents";
+import { captureSupabaseActionIdentity } from "@/services/supabaseSessionFence";
+import { ScopedSupabaseNotificationProvider } from "@/components/ScopedSupabaseNotificationProvider";
 import {
     deleteNotification as deleteNotificationDoc,
     getUnreadCount,
@@ -42,17 +46,21 @@ import type {
 // Without this, an incoming push only buzzes when the app is backgrounded.
 // We want the banner + sound + badge in-foreground too so the user knows.
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
+  handleNotification: async notification => {
+    let show = true;
+    if (getRuntimeBackend() === "supabase") {
+      const before = captureSupabaseActionIdentity();
+      const row = await verifySupabasePushEvent(notification.request.content.data);
+      const current = captureSupabaseActionIdentity();
+      show = !!row && row.userId === current.userId && before.userId === current.userId && before.revision === current.revision;
+    }
+    return { shouldShowBanner: show, shouldShowList: show, shouldPlaySound: show, shouldSetBadge: show };
+  },
 });
 
 // ─── Context shape ───────────────────────────────────────────────────────────
 
-interface NotificationContextValue {
+export interface NotificationContextValue {
   notifications: AppNotification[];
   unreadCount: number;
   isLoading: boolean;
@@ -79,6 +87,11 @@ interface NotificationProviderProps {
 }
 
 export function NotificationProvider({ children }: NotificationProviderProps) {
+  return getRuntimeBackend() === "supabase" ? <ScopedSupabaseNotificationProvider>{children}</ScopedSupabaseNotificationProvider>
+    : <AppwriteNotificationProvider>{children}</AppwriteNotificationProvider>;
+}
+
+function AppwriteNotificationProvider({ children }: NotificationProviderProps) {
   const { user } = useAuth();
   const router = useRouter();
 

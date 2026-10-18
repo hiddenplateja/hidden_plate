@@ -8,17 +8,58 @@
       "developmentClient": true,
       "distribution": "internal",
       "environment": "development",
+      "env": {
+        "EXPO_PUBLIC_BACKEND_BUILD": "development",
+        "EXPO_PUBLIC_BACKEND": "supabase",
+        "EXPO_PUBLIC_BACKEND_TEST_MODE": "false",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://ezhnntopskzlhllljbdv.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_J0bIHdDlIy1HI7efrupHeA_H45Jjalx",
+        "EXPO_PUBLIC_MEDIA_WORKER_URL": "https://hidden-plate-pay.hiddenplate-ja.workers.dev"
+      },
       "android": {
         "buildType": "apk"
       }
     },
     "preview": {
       "distribution": "internal",
-      "environment": "development"
+      "environment": "development",
+      "env": {
+        "EXPO_PUBLIC_BACKEND_BUILD": "preview",
+        "EXPO_PUBLIC_BACKEND": "supabase",
+        "EXPO_PUBLIC_BACKEND_TEST_MODE": "false",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://ezhnntopskzlhllljbdv.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_J0bIHdDlIy1HI7efrupHeA_H45Jjalx",
+        "EXPO_PUBLIC_MEDIA_WORKER_URL": "https://hidden-plate-pay.hiddenplate-ja.workers.dev"
+      }
+    },
+    "preview-supabase": {
+      "extends": "preview",
+      "developmentClient": false,
+      "distribution": "internal",
+      "environment": "development",
+      "env": {
+        "EXPO_PUBLIC_BACKEND_BUILD": "preview",
+        "EXPO_PUBLIC_BACKEND": "supabase",
+        "EXPO_PUBLIC_BACKEND_TEST_MODE": "true",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://ezhnntopskzlhllljbdv.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_J0bIHdDlIy1HI7efrupHeA_H45Jjalx",
+        "EXPO_PUBLIC_MEDIA_WORKER_URL": "https://hidden-plate-pay.hiddenplate-ja.workers.dev"
+      },
+      "android": {
+        "buildType": "apk"
+      }
     },
     "production": {
       "autoIncrement": true,
-      "environment": "production"
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_BACKEND_BUILD": "production",
+        "EXPO_PUBLIC_BACKEND": "supabase",
+        "EXPO_PUBLIC_BACKEND_TEST_MODE": "false",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://ezhnntopskzlhllljbdv.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_J0bIHdDlIy1HI7efrupHeA_H45Jjalx",
+        "EXPO_PUBLIC_MEDIA_WORKER_URL": "https://hidden-plate-pay.hiddenplate-ja.workers.dev"
+      }
     }
   },
   "submit": {

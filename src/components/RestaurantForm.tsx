@@ -32,6 +32,8 @@ import {
 import { LocationPickerMap, type LatLng } from "@/components/LocationPickerMap";
 import { MenuEditor } from "@/components/MenuEditor";
 import { Button } from "@/components/ui/Button";
+import { useAccountActionScope } from "@/hooks/useAccountActionScope";
+import { uploadAccountPhotos } from "@/utils/accountPhotoUpload";
 import {
   CATEGORY_OPTIONS,
   CUISINE_OPTIONS,
@@ -114,6 +116,7 @@ export function RestaurantForm({
   intro,
   onSubmit,
 }: RestaurantFormProps) {
+  const beginAction = useAccountActionScope();
   const { styles, colors } = useThemedStyles(makeStyles);
   const initialHours = initial?.openingHours ?? null;
   const firstSlot = initialHours
@@ -250,6 +253,7 @@ export function RestaurantForm({
   }, [hoursEnabled, openTime, closeTime, openDays]);
 
   const handleSubmit = useCallback(async () => {
+    const action = beginAction(); if (!action.isCurrent()) return;
     if (name.trim().length < 2) {
       Alert.alert("Add a name", "What's the restaurant called?");
       return;
@@ -286,28 +290,20 @@ export function RestaurantForm({
     }
 
     setSubmitting(true);
-    const newlyUploaded: string[] = [];
     try {
       const keptIds = photos
         .filter((p) => p.existingFileId)
         .map((p) => p.existingFileId as string);
       const toUpload = photos.filter((p) => !p.existingFileId);
 
-      for (let i = 0; i < toUpload.length; i++) {
-        setProgress(`Uploading photo ${i + 1} of ${toUpload.length}…`);
-        try {
-          const compressed = await compressImage(toUpload[i].uri);
-          const id = await uploadRestaurantImage(compressed);
-          newlyUploaded.push(id);
-        } catch (err) {
-          await Promise.all(newlyUploaded.map((fid) => deleteImage(fid)));
-          throw err;
-        }
-      }
+      const newlyUploaded = await uploadAccountPhotos(action, toUpload, {
+        compress: compressImage, upload: uploadRestaurantImage, remove: deleteImage,
+        progress: (index, total) => setProgress(`Uploading photo ${index} of ${total}…`),
+      });
 
       const imageIds = [...keptIds, ...newlyUploaded];
       setProgress("Saving…");
-      await onSubmit({
+      await action.run(() => onSubmit({
         name,
         description: description.trim() || null,
         address,
@@ -326,17 +322,18 @@ export function RestaurantForm({
         openingHours,
         menu,
         ...(admin ? { isActive, isVerified, isFeatured } : {}),
-      });
+      }));
     } catch (err) {
+      if (!action.isCurrent()) return;
       Alert.alert(
         "Couldn't save",
         err instanceof Error ? err.message : "Please try again.",
       );
     } finally {
-      setSubmitting(false);
-      setProgress(null);
+      if (action.canUpdate()) { setSubmitting(false); setProgress(null); }
     }
   }, [
+    beginAction,
     name,
     address,
     parish,

@@ -8,9 +8,8 @@
 // fulfilled server-side by the Cloudflare Worker's RevenueCat webhook, which
 // reads the plan's `days` from app_config and extends `listingPaidUntil`.
 
-import { Query } from "react-native-appwrite";
-
-import { appwriteConfig, databases } from "@/services/appwrite";
+import { PAID_FEATURES_ENABLED } from "@/constants/features";
+import { getRuntimeBackend } from "@/services/backendRuntime";
 import {
   purchaseRestaurantProduct,
   revenueCatConfigured,
@@ -54,6 +53,8 @@ interface ConfigDoc {
  * defaults when unset/unparseable. Tolerant — never throws.
  */
 export async function getListingPlans(): Promise<ListingPlan[]> {
+  if (!PAID_FEATURES_ENABLED || getRuntimeBackend() !== "appwrite") return DEFAULT_LISTING_PLANS;
+  const [{ appwriteConfig, databases }, { Query }] = await Promise.all([import("@/services/appwrite"), import("react-native-appwrite")]);
   const collection = appwriteConfig.collections.appConfig;
   if (!collection) return DEFAULT_LISTING_PLANS;
   try {

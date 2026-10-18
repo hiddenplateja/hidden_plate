@@ -13,24 +13,27 @@ import {
   type RestaurantFormValues,
 } from "@/components/RestaurantForm";
 import { createRestaurant } from "@/services/restaurants";
+import { useAccountActionScope } from "@/hooks/useAccountActionScope";
 import { fonts, spacing, typographyTokens as T } from "@/theme/colors";
 import type { ThemeColors } from "@/theme/themes";
 import { useThemedStyles } from "@/theme/useThemedStyles";
 
 export default function AddRestaurantScreen() {
   const router = useRouter();
+  const beginAction = useAccountActionScope();
   const { styles } = useThemedStyles(makeStyles);
 
   const handleSubmit = useCallback(
     async (values: RestaurantFormValues) => {
-      await createRestaurant(values);
+      const action = beginAction(); action.assertCurrent();
+      await action.run(() => createRestaurant(values));
       Alert.alert(
         "Submitted for review 🎉",
         "Thanks for the tip! Your restaurant has been sent for approval and will show up once it's been reviewed.",
-        [{ text: "Done", onPress: () => router.back() }],
+        [{ text: "Done", onPress: () => { if (action.isCurrent()) router.back(); } }],
       );
     },
-    [router],
+    [router, beginAction],
   );
 
   return (

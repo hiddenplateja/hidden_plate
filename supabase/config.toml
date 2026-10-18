@@ -1,0 +1,15 @@
+project_id = "hidden_plate"
+
+[functions.send-push]
+verify_jwt = false
+
+[functions.delete-account]
+verify_jwt = true
+
+# Staged only; no deployment or payment activation in this phase.
+[functions.verify-purchase]
+verify_jwt = true
+
+# This endpoint is protected by withSupabase auth:"secret", not public access.
+[functions.retry-account-deletion]
+verify_jwt = false

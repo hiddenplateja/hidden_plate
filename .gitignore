@@ -44,3 +44,11 @@ app-example
 
 
 .env.local
+
+# Supabase CLI state and local server-only function secrets
+supabase/.temp/
+supabase/functions/.env*
+!supabase/functions/.env.example
+
+# Local Metro export verification (contains client bundle/configuration)
+/.codex-preview-bundle/

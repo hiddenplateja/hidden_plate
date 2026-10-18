@@ -19,6 +19,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AdminHeader } from "@/components/admin/AdminHeader";
+import { useAccountActionScope } from "@/hooks/useAccountActionScope";
 import {
   ImagePickerField,
   type PickedPhoto,
@@ -54,6 +55,7 @@ import { spotDayKey } from "@/utils/spotOfTheDay";
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export default function AdminSpotlight() {
+  const beginAction = useAccountActionScope();
   const { styles, colors } = useThemedStyles(makeStyles);
   const [config, setConfig] = useState<SpotConfig | null>(null);
   const [pinned, setPinned] = useState<Restaurant | null>(null);
@@ -70,29 +72,31 @@ export default function AdminSpotlight() {
   const [progress, setProgress] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const [cfg, feat] = await Promise.all([
+    const action = beginAction(); if (!action.isCurrent()) return;
+    const [cfg, feat] = await action.run(() => Promise.all([
       getSpotConfig(),
       listRestaurants({ filters: { featured: true }, pageSize: 50 }).catch(
         () => ({ items: [] as Restaurant[] }),
       ),
-    ]);
+    ]));
     setConfig(cfg);
     setFeatured(feat.items);
     if (cfg?.spotRestaurantId) {
       try {
-        setPinned(await getRestaurantById(cfg.spotRestaurantId));
+        setPinned(await action.run(() => getRestaurantById(cfg.spotRestaurantId!)));
       } catch {
+        if (!action.isCurrent()) return;
         setPinned(null);
       }
     } else {
       setPinned(null);
     }
     setLoading(false);
-  }, []);
+  }, [beginAction]);
 
   useFocusEffect(
     useCallback(() => {
-      load();
+      void load().catch(() => {});
     }, [load]),
   );
 
@@ -103,23 +107,24 @@ export default function AdminSpotlight() {
       return;
     }
     let active = true;
+    const action = beginAction();
     const timer = setTimeout(async () => {
       try {
-        const page = await listAdminRestaurants({
+        const page = await action.run(() => listAdminRestaurants({
           search: query,
           status: "active",
           pageSize: 8,
-        });
+        }));
         if (active) setResults(page.items);
       } catch {
-        if (active) setResults([]);
+        if (active && action.canUpdate()) setResults([]);
       }
     }, 300);
     return () => {
       active = false;
       clearTimeout(timer);
     };
-  }, [query, selected]);
+  }, [query, selected, beginAction]);
 
   const resetEditor = () => {
     setSelected(null);
@@ -131,6 +136,7 @@ export default function AdminSpotlight() {
 
   const pinSelected = useCallback(async () => {
     if (!selected) return;
+    const action = beginAction(); if (!action.isCurrent()) return;
     const date = pinDate.trim();
     if (date && !DATE_RE.test(date)) {
       Alert.alert(
@@ -148,11 +154,11 @@ export default function AdminSpotlight() {
           plateId = p.existingFileId;
         } else {
           setProgress("Uploading image…");
-          const compressed = await compressImage(p.uri);
-          plateId = await uploadRestaurantImage(compressed);
+          const compressed = await action.run(() => compressImage(p.uri));
+          plateId = await action.run(() => uploadRestaurantImage(compressed));
         }
       }
-      await setSpotOfTheDay(selected.id, date || null, plateId);
+      await action.run(() => setSpotOfTheDay(selected.id, date || null, plateId));
       setPinned(selected);
       setConfig((prev) => ({
         id: prev?.id ?? null,
@@ -162,20 +168,21 @@ export default function AdminSpotlight() {
       }));
       resetEditor();
     } catch (err) {
+      if (!action.isCurrent()) return;
       Alert.alert(
         "Couldn't pin",
         err instanceof Error ? err.message : "Try again.",
       );
     } finally {
-      setBusy(false);
-      setProgress(null);
+      if (action.canUpdate()) { setBusy(false); setProgress(null); }
     }
-  }, [selected, pinDate, platePhotos]);
+  }, [selected, pinDate, platePhotos, beginAction]);
 
   const clearPin = useCallback(async () => {
+    const action = beginAction(); if (!action.isCurrent()) return;
     setBusy(true);
     try {
-      await setSpotOfTheDay(null, null, null);
+      await action.run(() => setSpotOfTheDay(null, null, null));
       setPinned(null);
       setConfig((prev) =>
         prev
@@ -183,16 +190,18 @@ export default function AdminSpotlight() {
           : prev,
       );
     } catch (err) {
+      if (!action.isCurrent()) return;
       Alert.alert(
         "Couldn't clear",
         err instanceof Error ? err.message : "Try again.",
       );
     } finally {
-      setBusy(false);
+      if (action.canUpdate()) setBusy(false);
     }
-  }, []);
+  }, [beginAction]);
 
   const unfeature = useCallback((r: Restaurant) => {
+    const action = beginAction(); if (!action.isCurrent()) return;
     Alert.alert(
       "Remove from featured?",
       `"${r.name}" will no longer be featured.`,
@@ -203,9 +212,10 @@ export default function AdminSpotlight() {
           style: "destructive",
           onPress: async () => {
             try {
-              await setRestaurantFlags(r.id, { isFeatured: false });
+              await action.run(() => setRestaurantFlags(r.id, { isFeatured: false }));
               setFeatured((prev) => prev.filter((x) => x.id !== r.id));
             } catch (err) {
+              if (!action.isCurrent()) return;
               Alert.alert(
                 "Couldn't update",
                 err instanceof Error ? err.message : "Try again.",
@@ -215,7 +225,7 @@ export default function AdminSpotlight() {
         },
       ],
     );
-  }, []);
+  }, [beginAction]);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>

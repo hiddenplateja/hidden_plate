@@ -5,6 +5,8 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "hidden-plate-pay",
+	// Pin the existing Hidden Plate account; never deploy into another CLI login.
+	"account_id": "cdd46b9c0c0555f0350335c53ea2e8ec",
 	"main": "src/index.ts",
 	"compatibility_date": "2026-06-08",
 	"observability": {
@@ -36,7 +38,17 @@
 		"EMAIL_OTPS_COLLECTION_ID": "6a30ab1100241fa5d0ac",
 		"RESEND_FROM": "Hidden Plate <noreply@nutinbutheat.com>",
 		"OTP_TTL_MINUTES": "10",
+		// Supabase's project URL and publishable key are public client values.
+		// The Worker uses them only to validate the caller's access token.
+		"SUPABASE_URL": "https://ezhnntopskzlhllljbdv.supabase.co",
+		"SUPABASE_PUBLISHABLE_KEY": "sb_publishable_J0bIHdDlIy1HI7efrupHeA_H45Jjalx",
 	},
+
+	// Create this bucket in Cloudflare before deploying this change:
+	// npx wrangler r2 bucket create hidden-plate-media
+	"r2_buckets": [
+		{ "binding": "MEDIA", "bucket_name": "hidden-plate-media" },
+	],
 
 	/**
 	 * Per-IP rate limits (Cloudflare Workers Rate Limiting API) for the

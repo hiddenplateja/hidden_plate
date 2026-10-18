@@ -19,6 +19,10 @@
 // SVG/complex marker children here), so the font glyphs stay. All regular
 // UI chrome uses Lucide like the rest of the app.
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import BottomSheet, { BottomSheetView } from "@gorhom/bottom-sheet";
+import { Image as ExpoImage } from "expo-image";
+import * as Location from "expo-location";
+import { useRouter } from "expo-router";
 import {
   ArrowRight,
   Globe,
@@ -32,10 +36,6 @@ import {
   UtensilsCrossed,
   type LucideIcon,
 } from "lucide-react-native";
-import BottomSheet, { BottomSheetView } from "@gorhom/bottom-sheet";
-import { Image as ExpoImage } from "expo-image";
-import * as Location from "expo-location";
-import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -124,7 +124,8 @@ function iconForRestaurant(
   if (/seafood|fish|lobster|shrimp|crab/.test(t)) return "fish";
   if (/chicken|wing|fried/.test(t)) return "food-drumstick";
   if (/pizza/.test(t)) return "pizza";
-  if (/patty|patties|bakery|bread|pastry|baked/.test(t)) return "food-croissant";
+  if (/patty|patties|bakery|bread|pastry|baked/.test(t))
+    return "food-croissant";
   if (/ital|vegan|vegetarian|salad|healthy/.test(t)) return "leaf";
   if (/sweet|dessert|cake|ice.?cream|gelato/.test(t)) return "cupcake";
   if (/coffee|cafe|espresso|tea/.test(t)) return "coffee";
@@ -463,7 +464,7 @@ export default function MapScreen() {
         // Restaurants
         (async () => {
           try {
-            return await listRestaurants({ pageSize: 100, sort: "recent" });
+            return await listRestaurants({ pageSize: 2000, sort: "recent" });
           } catch (err) {
             console.warn("[map] failed to load restaurants:", err);
             return { items: [] as Restaurant[] };
@@ -812,206 +813,206 @@ export default function MapScreen() {
 function makeScreenStyles(c: ThemeColors) {
   const colors = c;
   return StyleSheet.create({
-  container: { flex: 1 },
-  center: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: colors.pageBackground,
-    gap: spacing.md,
-  },
-  webFallback: {
-    fontFamily: fonts.regular,
-    fontSize: T.size.base,
-    color: colors.textMuted,
-    textAlign: "center",
-    paddingHorizontal: spacing.xl,
-  },
-  headerWrap: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-  },
-  headerPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    marginHorizontal: spacing.screen,
-    marginTop: spacing.md,
-    backgroundColor: colors.cardBackground,
-    borderRadius: radius.full,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: colors.divider,
-    ...shadows.md,
-  },
-  headerTitle: {
-    fontFamily: fonts.bold,
-    fontSize: T.size.base,
-    color: colors.textPrimary,
-    letterSpacing: T.tracking.tight,
-  },
-  headerCount: {
-    fontFamily: fonts.regular,
-    fontSize: T.size.sm,
-    color: colors.textMuted,
-    marginLeft: "auto",
-  },
-  locationFab: {
-    position: "absolute",
-    right: spacing.screen,
-    bottom: 96,
-    width: 48,
-    height: 48,
-    borderRadius: radius.full,
-    backgroundColor: colors.cardBackground,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1.5,
-    borderColor: colors.divider,
-    ...shadows.md,
-  },
+    container: { flex: 1 },
+    center: {
+      flex: 1,
+      justifyContent: "center",
+      alignItems: "center",
+      backgroundColor: colors.pageBackground,
+      gap: spacing.md,
+    },
+    webFallback: {
+      fontFamily: fonts.regular,
+      fontSize: T.size.base,
+      color: colors.textMuted,
+      textAlign: "center",
+      paddingHorizontal: spacing.xl,
+    },
+    headerWrap: {
+      position: "absolute",
+      top: 0,
+      left: 0,
+      right: 0,
+    },
+    headerPill: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: spacing.sm,
+      marginHorizontal: spacing.screen,
+      marginTop: spacing.md,
+      backgroundColor: colors.cardBackground,
+      borderRadius: radius.full,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: 12,
+      borderWidth: 1,
+      borderColor: colors.divider,
+      ...shadows.md,
+    },
+    headerTitle: {
+      fontFamily: fonts.bold,
+      fontSize: T.size.base,
+      color: colors.textPrimary,
+      letterSpacing: T.tracking.tight,
+    },
+    headerCount: {
+      fontFamily: fonts.regular,
+      fontSize: T.size.sm,
+      color: colors.textMuted,
+      marginLeft: "auto",
+    },
+    locationFab: {
+      position: "absolute",
+      right: spacing.screen,
+      bottom: 96,
+      width: 48,
+      height: 48,
+      borderRadius: radius.full,
+      backgroundColor: colors.cardBackground,
+      alignItems: "center",
+      justifyContent: "center",
+      borderWidth: 1.5,
+      borderColor: colors.divider,
+      ...shadows.md,
+    },
   });
 }
 
 function makeSheetStyles(c: ThemeColors) {
   const colors = c;
   return StyleSheet.create({
-  background: {
-    backgroundColor: colors.cardBackground,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-  },
-  handle: {
-    width: 40,
-    height: 4,
-    backgroundColor: colors.border,
-    borderRadius: radius.full,
-  },
-  content: {
-    flex: 1,
-    paddingHorizontal: spacing.screen,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.xl,
-  },
-  image: {
-    width: "100%",
-    height: 170,
-    borderRadius: radius.lg,
-    marginBottom: spacing.lg,
-    backgroundColor: colors.surface,
-  },
-  imagePlaceholder: { alignItems: "center", justifyContent: "center" },
-  name: {
-    fontFamily: fonts.black,
-    fontSize: T.size.xxl,
-    color: colors.textPrimary,
-    letterSpacing: T.tracking.tight,
-    marginBottom: spacing.sm,
-  },
-  metaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  ratingPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: colors.surface,
-    borderRadius: radius.full,
-    paddingHorizontal: spacing.sm + 2,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  ratingValue: {
-    fontFamily: fonts.bold,
-    fontSize: T.size.sm,
-    color: colors.textPrimary,
-  },
-  ratingCount: {
-    fontFamily: fonts.regular,
-    fontSize: T.size.xs,
-    color: colors.textMuted,
-  },
-  newPill: {
-    backgroundColor: colors.accent,
-    borderRadius: radius.full,
-    paddingHorizontal: spacing.sm + 2,
-    paddingVertical: 4,
-  },
-  newPillText: {
-    fontFamily: fonts.bold,
-    fontSize: T.size.xs,
-    color: colors.white,
-  },
-  metaDot: { color: colors.textMuted, fontSize: T.size.sm },
-  metaText: {
-    fontFamily: fonts.medium,
-    fontSize: T.size.sm,
-    color: colors.textSecondary,
-    textTransform: "capitalize",
-  },
-  infoRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  infoText: {
-    flex: 1,
-    fontFamily: fonts.regular,
-    fontSize: T.size.subDetail,
-    color: colors.textSecondary,
-    lineHeight: 21,
-  },
-  description: {
-    fontFamily: fonts.regular,
-    fontSize: T.size.base,
-    color: colors.textSecondary,
-    lineHeight: 22,
-    marginBottom: spacing.lg,
-  },
-  quickRow: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  tile: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 5,
-    paddingVertical: spacing.md,
-    borderRadius: radius.lg,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  tileLabel: {
-    fontFamily: fonts.medium,
-    fontSize: T.size.xs,
-    color: colors.textPrimary,
-  },
-  viewBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: spacing.sm,
-    height: 52,
-    borderRadius: radius.lg,
-    backgroundColor: colors.primary,
-    ...shadows.sm,
-  },
-  viewBtnText: {
-    fontFamily: fonts.bold,
-    fontSize: T.size.base,
-    color: colors.onPrimary,
-  },
+    background: {
+      backgroundColor: colors.cardBackground,
+      borderTopLeftRadius: radius.xl,
+      borderTopRightRadius: radius.xl,
+    },
+    handle: {
+      width: 40,
+      height: 4,
+      backgroundColor: colors.border,
+      borderRadius: radius.full,
+    },
+    content: {
+      flex: 1,
+      paddingHorizontal: spacing.screen,
+      paddingTop: spacing.sm,
+      paddingBottom: spacing.xl,
+    },
+    image: {
+      width: "100%",
+      height: 170,
+      borderRadius: radius.lg,
+      marginBottom: spacing.lg,
+      backgroundColor: colors.surface,
+    },
+    imagePlaceholder: { alignItems: "center", justifyContent: "center" },
+    name: {
+      fontFamily: fonts.black,
+      fontSize: T.size.xxl,
+      color: colors.textPrimary,
+      letterSpacing: T.tracking.tight,
+      marginBottom: spacing.sm,
+    },
+    metaRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      flexWrap: "wrap",
+      gap: spacing.sm,
+      marginBottom: spacing.md,
+    },
+    ratingPill: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 4,
+      backgroundColor: colors.surface,
+      borderRadius: radius.full,
+      paddingHorizontal: spacing.sm + 2,
+      paddingVertical: 4,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    ratingValue: {
+      fontFamily: fonts.bold,
+      fontSize: T.size.sm,
+      color: colors.textPrimary,
+    },
+    ratingCount: {
+      fontFamily: fonts.regular,
+      fontSize: T.size.xs,
+      color: colors.textMuted,
+    },
+    newPill: {
+      backgroundColor: colors.accent,
+      borderRadius: radius.full,
+      paddingHorizontal: spacing.sm + 2,
+      paddingVertical: 4,
+    },
+    newPillText: {
+      fontFamily: fonts.bold,
+      fontSize: T.size.xs,
+      color: colors.white,
+    },
+    metaDot: { color: colors.textMuted, fontSize: T.size.sm },
+    metaText: {
+      fontFamily: fonts.medium,
+      fontSize: T.size.sm,
+      color: colors.textSecondary,
+      textTransform: "capitalize",
+    },
+    infoRow: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: spacing.sm,
+      marginBottom: spacing.md,
+    },
+    infoText: {
+      flex: 1,
+      fontFamily: fonts.regular,
+      fontSize: T.size.subDetail,
+      color: colors.textSecondary,
+      lineHeight: 21,
+    },
+    description: {
+      fontFamily: fonts.regular,
+      fontSize: T.size.base,
+      color: colors.textSecondary,
+      lineHeight: 22,
+      marginBottom: spacing.lg,
+    },
+    quickRow: {
+      flexDirection: "row",
+      gap: spacing.sm,
+      marginBottom: spacing.md,
+    },
+    tile: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 5,
+      paddingVertical: spacing.md,
+      borderRadius: radius.lg,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    tileLabel: {
+      fontFamily: fonts.medium,
+      fontSize: T.size.xs,
+      color: colors.textPrimary,
+    },
+    viewBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: spacing.sm,
+      height: 52,
+      borderRadius: radius.lg,
+      backgroundColor: colors.primary,
+      ...shadows.sm,
+    },
+    viewBtnText: {
+      fontFamily: fonts.bold,
+      fontSize: T.size.base,
+      color: colors.onPrimary,
+    },
   });
 }

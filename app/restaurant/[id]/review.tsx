@@ -23,6 +23,8 @@ import {
 import { StarRating } from "@/components/StarRating";
 import { Button } from "@/components/ui/Button";
 import { useAuth } from "@/hooks/useAuth";
+import { useAccountActionScope } from "@/hooks/useAccountActionScope";
+import { uploadAccountPhotos } from "@/utils/accountPhotoUpload";
 import { syncEarnedBadges } from "@/services/badges";
 import { getRestaurantById } from "@/services/restaurants";
 import {
@@ -51,6 +53,7 @@ export default function WriteReviewScreen() {
   const restaurantId = params.id;
   const editingReviewId = params.reviewId;
   const { user } = useAuth();
+  const beginAction = useAccountActionScope();
 
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [loading, setLoading] = useState(true);
@@ -109,7 +112,7 @@ export default function WriteReviewScreen() {
         Alert.alert(
           "Couldn't load",
           err instanceof Error ? err.message : "Try again.",
-          [{ text: "OK", onPress: () => router.back() }],
+          [{ text: "OK", onPress: () => { if (beginAction().isCurrent()) router.back(); } }],
         );
       } finally {
         if (!cancelled) setLoading(false);
@@ -118,9 +121,10 @@ export default function WriteReviewScreen() {
     return () => {
       cancelled = true;
     };
-  }, [restaurantId, editingReviewId, router]);
+  }, [restaurantId, editingReviewId, router, beginAction]);
 
   const handleSubmit = async () => {
+    const action = beginAction(); if (!action.isCurrent()) return;
     if (rating < 1) {
       setRatingError("Please tap to add a rating.");
       return;
@@ -135,58 +139,48 @@ export default function WriteReviewScreen() {
         .filter((p) => p.existingFileId)
         .map((p) => p.existingFileId!) as string[];
 
-      const uploadedIds: string[] = [];
-
-      for (let i = 0; i < newToUpload.length; i++) {
-        setSubmitProgress(`Uploading photo ${i + 1} of ${newToUpload.length}…`);
-        try {
-          const compressed = await compressImage(newToUpload[i].uri);
-          const id = await uploadReviewImage(compressed);
-          uploadedIds.push(id);
-        } catch (err) {
-          // If upload fails partway, clean up what we already uploaded
-          // so we don't leave orphans
-          await Promise.all(uploadedIds.map((id) => deleteImage(id)));
-          throw err;
-        }
-      }
+      const uploadedIds = await uploadAccountPhotos(action, newToUpload, {
+        compress: compressImage, upload: uploadReviewImage, remove: deleteImage,
+        progress: (index, total) => setSubmitProgress(`Uploading photo ${index} of ${total}…`),
+      });
 
       const finalImageIds = [...keptIds, ...uploadedIds];
 
       // 2. Save the review
       setSubmitProgress("Saving review…");
       if (editingReviewId) {
-        await updateReview(editingReviewId, {
+        await action.run(() => updateReview(editingReviewId, {
           rating,
           comment: comment.trim() || null,
           imageIds: finalImageIds,
-        });
+        }));
 
         // 3. Delete any removed images (were on the original but not kept)
         const removed = originalImageIdsRef.current.filter(
           (id) => !keptIds.includes(id),
         );
-        await Promise.all(removed.map((id) => deleteImage(id)));
+        await action.run(() => Promise.all(removed.map((id) => action.run(() => deleteImage(id)))));
         router.back();
       } else {
-        await createReview({
+        await action.run(() => createReview({
           restaurantId,
           rating,
           comment: comment.trim() || undefined,
           imageIds: finalImageIds,
-        });
+        }));
 
         // A new review can push the user over a reputation tier — detect it and
         // celebrate before leaving. Best-effort: never block the post on this.
         let earnedNew: ReviewerBadge[] = [];
         if (user) {
           try {
-            const stats = await getUserReviewStats(user.id);
-            earnedNew = await syncEarnedBadges(stats);
+            const stats = await action.run(() => getUserReviewStats(user.id));
+            earnedNew = await action.run(() => syncEarnedBadges(stats));
           } catch {
             // ignore — a missed celebration must not fail the review
           }
         }
+        action.assertCurrent();
         if (earnedNew.length > 0) {
           setCelebration(earnedNew); // navigate back when the modal is dismissed
         } else {
@@ -194,13 +188,13 @@ export default function WriteReviewScreen() {
         }
       }
     } catch (err) {
+      if (!action.isCurrent()) return;
       Alert.alert(
         "Couldn't save",
         err instanceof Error ? err.message : "Try again.",
       );
     } finally {
-      setSubmitting(false);
-      setSubmitProgress(null);
+      if (action.canUpdate()) { setSubmitting(false); setSubmitProgress(null); }
     }
   };
 
@@ -315,6 +309,7 @@ export default function WriteReviewScreen() {
         <BadgeEarnedModal
           badges={celebration}
           onClose={() => {
+            if (!beginAction().isCurrent()) return;
             setCelebration(null);
             router.back();
           }}
