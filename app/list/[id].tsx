@@ -10,13 +10,14 @@ import {
   Globe,
   Lock,
   Pencil,
+  Plus,
   Share2,
   Trash2,
   UtensilsCrossed,
   X,
 } from "lucide-react-native";
 import * as ExpoLinking from "expo-linking";
-import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter, type Href } from "expo-router";
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
@@ -249,6 +250,17 @@ export default function ListDetailScreen() {
       <Text style={styles.count}>
         {count} {count === 1 ? "spot" : "spots"}
       </Text>
+      {isOwner ? (
+        <Pressable
+          onPress={() => router.push(`/list/add/${id}` as Href)}
+          style={({ pressed }) => [styles.addBtn, pressed && { opacity: 0.7 }]}
+          accessibilityRole="button"
+          accessibilityLabel="Add restaurants to this collection"
+        >
+          <Plus size={18} color={colors.primary} strokeWidth={2} />
+          <Text style={styles.addText}>Add restaurants</Text>
+        </Pressable>
+      ) : null}
       <Pressable
         onPress={handleShare}
         style={styles.shareBtn}
@@ -307,7 +319,7 @@ export default function ListDetailScreen() {
             <Text style={styles.emptyTitle}>No spots yet</Text>
             <Text style={styles.emptyBody}>
               {isOwner
-                ? "Open any restaurant and tap “Add to a collection.”"
+                ? "Tap “Add restaurants” to choose spots for this collection."
                 : "This collection is empty."}
             </Text>
           </View>
@@ -412,6 +424,18 @@ function makeStyles(c: ThemeColors) {
       backgroundColor: colors.primary,
       ...shadows.sm,
     },
+    addBtn: {
+      minHeight: 48,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: spacing.sm,
+      marginTop: spacing.md,
+      padding: spacing.md,
+      borderRadius: radius.lg,
+      backgroundColor: colors.surface,
+    },
+    addText: { fontFamily: fonts.bold, fontSize: T.size.base, color: colors.primary },
     shareText: {
       fontFamily: fonts.bold,
       fontSize: T.size.base,

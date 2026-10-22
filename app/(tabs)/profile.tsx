@@ -230,7 +230,7 @@ function makeStyles(c: ThemeColors) {
     justifyContent: "space-between",
     alignItems: "center",
     paddingHorizontal: spacing.screen,
-    paddingTop: spacing.md,
+    paddingTop: spacing.xs,
     paddingBottom: spacing.xs,
     backgroundColor: colors.cardBackground,
   },

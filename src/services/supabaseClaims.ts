@@ -28,12 +28,12 @@ export async function createSupabaseClaim(input: CreateClaimInput): Promise<Rest
 }
 export async function getMySupabaseClaimForRestaurant(id: string): Promise<RestaurantClaim | null> {
   if (!SUPABASE_UUID.test(id)) return null;
-  try {
-    const pinned = await requireSupabaseDataSession();
-    const { data, error } = await restForSupabaseDataSession(pinned, client => client.from("restaurant_claims").select("*").eq("restaurant_id", id)
-      .eq("user_id", pinned.userId).order("created_at", { ascending: false }).order("id", { ascending: false }).limit(1));
-    return error || !data?.length ? null : mapClaim(data[0] as ClaimRow);
-  } catch { return null; }
+  const pinned = await requireSupabaseDataSession();
+  const { data, error } = await restForSupabaseDataSession(pinned, client => client.from("restaurant_claims").select("*").eq("restaurant_id", id)
+    .eq("user_id", pinned.userId).order("created_at", { ascending: false }).order("id", { ascending: false }).limit(1));
+  // A failed status check must not be interpreted as permission to submit again.
+  if (error) throw new Error("Couldn't check your claim status. Please try again.");
+  return !data?.length ? null : mapClaim(data[0] as ClaimRow);
 }
 export const listSupabaseClaims = (opts: QueueOptions & { status?: ClaimStatus } = {}) =>
   supabaseQueuePage<ClaimRow, RestaurantClaim>("claim", mapClaim, opts, opts.status ?? "pending");

@@ -1285,9 +1285,6 @@ export default function CommunityScreen() {
       const parishText = restaurant
         ? (PARISH_LABELS[restaurant.parish] ?? restaurant.parish)
         : null;
-      const coverFileId =
-        restaurant?.coverImageId ?? restaurant?.imageIds[0] ?? null;
-      const coverUrl = coverFileId ? getImageViewUrl(coverFileId) : null;
 
       return (
         <Animated.View
@@ -1400,16 +1397,6 @@ export default function CommunityScreen() {
                   </View>
                 ) : null}
               </Pressable>
-            ) : null}
-
-            {review.imageIds.length === 0 && coverUrl ? (
-              <Image
-                source={{ uri: coverUrl }}
-                style={cardStyles.restaurantCover}
-                contentFit="cover"
-                transition={250}
-                cachePolicy="memory-disk"
-              />
             ) : null}
 
             {/* Footer: Like · Comment · Share */}
@@ -2313,14 +2300,6 @@ function makeCardStyles(c: ThemeColors) {
     fontFamily: fonts.bold,
     fontSize: T.size.xs,
     color: colors.white,
-  },
-  restaurantCover: {
-    width: "100%",
-    height: 160,
-    borderRadius: radius.lg,
-    backgroundColor: colors.pageBackground,
-    marginBottom: spacing.md,
-    opacity: 0.85,
   },
   // Actions row (like / comment). No top hairline — under a post image it
   // read as a stray separator between the photo and the buttons.

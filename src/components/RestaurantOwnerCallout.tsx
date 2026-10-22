@@ -80,7 +80,11 @@ export function RestaurantOwnerCallout({
   onManageListing,
 }: Props) {
   const { styles, colors } = useThemedStyles(makeStyles);
-  const [claimStatus, setClaimStatus] = useState<ClaimStatus | null>(null);
+  const [claimState, setClaimState] = useState<{
+    restaurantId: string; userId: string; status: ClaimStatus | null;
+  } | null>(null);
+  const claimStatus = claimState?.restaurantId === restaurant.id && claimState.userId === currentUserId
+    ? claimState.status : null;
 
   const ownedByMe =
     !!restaurant.ownerId && restaurant.ownerId === currentUserId;
@@ -93,19 +97,20 @@ export function RestaurantOwnerCallout({
   useFocusEffect(
     useCallback(() => {
       if (!needClaimState) {
-        setClaimStatus(null);
+        setClaimState(null);
         return;
       }
       let active = true;
+      setClaimState(null);
       getMyClaimForRestaurant(restaurant.id)
         .then((c) => {
-          if (active) setClaimStatus(c?.status ?? null);
+          if (active && currentUserId) setClaimState({ restaurantId: restaurant.id, userId: currentUserId, status: c?.status ?? null });
         })
         .catch(() => {});
       return () => {
         active = false;
       };
-    }, [needClaimState, restaurant.id]),
+    }, [needClaimState, restaurant.id, currentUserId]),
   );
 
   if (ownedByMe) {

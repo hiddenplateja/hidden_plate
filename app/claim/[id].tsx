@@ -10,8 +10,8 @@ import {
   Lock,
   type LucideIcon,
 } from "lucide-react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -38,6 +38,7 @@ import { fonts, radius, spacing, typographyTokens as T } from "@/theme/colors";
 import type { ThemeColors } from "@/theme/themes";
 import { useThemedStyles } from "@/theme/useThemedStyles";
 import type { Restaurant } from "@/types/restaurant";
+import type { User } from "@/types/user";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -68,19 +69,27 @@ type Load =
 
 export default function ClaimRestaurantScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const router = useRouter();
   const { user } = useAuth();
+  return <ClaimRestaurantContent key={`${id}:${user?.id ?? "signed-out"}`} id={id} user={user} />;
+}
+
+function ClaimRestaurantContent({ id, user }: { id: string; user: User | null }) {
+  const router = useRouter();
   const { styles, colors } = useThemedStyles(makeStyles);
 
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
+  const activeRef = useRef(true);
+  useEffect(() => { activeRef.current = true; return () => { activeRef.current = false; }; }, []);
 
-  useEffect(() => {
-    if (!id) {
+  useFocusEffect(useCallback(() => {
+    if (!id || !user?.id) {
       setLoad({ status: "error" });
       return;
     }
     let active = true;
+    setLoad({ status: "loading" });
     (async () => {
       try {
         const [restaurant, existingClaim] = await Promise.all([
@@ -96,14 +105,16 @@ export default function ClaimRestaurantScreen() {
     return () => {
       active = false;
     };
-  }, [id]);
+  }, [id, user?.id]));
 
   const handleSubmit = useCallback(
     async (values: ClaimValues) => {
-      if (!id) return;
+      if (!id || !user || submittingRef.current || load.status !== "ready"
+        || load.existingClaim?.status === "pending" || load.restaurant.ownerId) return;
+      submittingRef.current = true;
       setSubmitting(true);
       try {
-        await createClaim({
+        const claim = await createClaim({
           restaurantId: id,
           contactName: values.name,
           contactPhone: values.phone,
@@ -111,21 +122,26 @@ export default function ClaimRestaurantScreen() {
           role: values.role,
           proofNote: values.note,
         });
+        if (!activeRef.current) return;
+        // Lock immediately, even if the success alert is dismissed without Done.
+        setLoad(previous => previous.status === "ready" ? { ...previous, existingClaim: claim } : previous);
         Alert.alert(
           "Claim submitted 🎉",
           "Thanks! We'll review your claim and get back to you. You'll get a verified-owner badge once it's approved.",
           [{ text: "Done", onPress: () => router.back() }],
         );
       } catch (err) {
+        if (!activeRef.current) return;
         Alert.alert(
           "Couldn't submit",
           err instanceof Error ? err.message : "Please try again.",
         );
       } finally {
-        setSubmitting(false);
+        submittingRef.current = false;
+        if (activeRef.current) setSubmitting(false);
       }
     },
-    [id, router],
+    [id, router, user, load],
   );
 
   return (

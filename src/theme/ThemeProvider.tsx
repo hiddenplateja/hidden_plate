@@ -1,5 +1,6 @@
 // src/theme/ThemeProvider.tsx
-// App theming: Light / Dark / System, persisted across launches.
+// App theming: Light by default; explicit Light / Dark / System preferences
+// are persisted across launches.
 //
 // useTheme() returns the active palette + the current mode + a setter. Screens
 // build their styles from `colors` (the active palette) so they restyle when
@@ -34,7 +35,7 @@ const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const systemScheme = useColorScheme(); // "light" | "dark" | null
-  const [mode, setModeState] = useState<ThemeMode>("system");
+  const [mode, setModeState] = useState<ThemeMode>("light");
 
   // Restore the saved preference on launch.
   useEffect(() => {

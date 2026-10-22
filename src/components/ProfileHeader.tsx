@@ -165,7 +165,7 @@ export function ProfileHeader({
         <StatsRow
           stats={stats}
           follow={follow}
-          marginTop={spacing.md}
+          marginTop={spacing.sm}
           onFollowersPress={onFollowersPress}
           onFollowingPress={onFollowingPress}
         />
@@ -605,8 +605,8 @@ function makeCenteredContainer(c: ThemeColors) {
   container: {
     backgroundColor: colors.cardBackground,
     paddingHorizontal: spacing.xl,
-    // Clear gap before the content-tab strip so the stats never crowd it.
-    paddingBottom: spacing.lg,
+    // Keep separation from the tabs without pushing the content down.
+    paddingBottom: spacing.md,
   },
   });
 }
@@ -619,7 +619,7 @@ function makeCenteredStyles(c: ThemeColors) {
   avatarWrap: {
     alignSelf: "center",
     marginTop: 0,
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
     position: "relative",
     ...shadows.md,
   },

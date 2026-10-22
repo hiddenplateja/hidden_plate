@@ -96,9 +96,11 @@ try {
     (select count(*)from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where not t.tgisinternal and(n.nspname='public'or(n.nspname='auth'and c.relname='users')))as safe_triggers`)).rows[0];
   assert(Number(counts.tables) === 33 && Number(counts.functions) === 102 && Number(counts.policies) === 58 && Number(counts.safe_triggers) === 26, "Restored object graph mismatch");
   console.log(JSON.stringify({ stage: "graph_verified", ...counts }));
+  await db.exec(await text("../migrations/20261020000028_welcome_emails.sql"));
   const suites = [
+    "welcome_emails",
     "nonpayment_privilege_cleanup", "nonpayment_privilege_cleanup_audit",
-    "auth_signup_completion", "profiles_admin", "moderation_claims", "restaurant_admin",
+    "auth_signup_completion", "profiles_admin", "moderation_claims", "claim_lifecycle", "restaurant_admin",
     "pagination_media_cleanup", "owner_contracts", "community_contracts",
     "profile_feeds", "profile_feeds_audit", "account_deletion", "account_deletion_audit",
     "saved_block_collection_permissions", "saved_block_collection_audit",

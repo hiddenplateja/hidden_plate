@@ -1,5 +1,15 @@
 import { getReviewerBadges } from "@/utils/reviewerBadges";
 
+// This suite checks badge tiers, not native icon rendering.
+jest.mock("lucide-react-native", () => ({
+  Compass: "Compass",
+  Crown: "Crown",
+  MapPinCheck: "MapPinCheck",
+  MapPinned: "MapPinned",
+  Star: "Star",
+  Trophy: "Trophy",
+}));
+
 const ids = (stats: { reviewCount: number; parishesVisited: number }) =>
   getReviewerBadges(stats).map((b) => b.id);
 

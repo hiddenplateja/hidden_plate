@@ -1,5 +1,13 @@
 # Supabase migration status
 
+Email follow-up (2026-10-20): separate welcome/security-email handling is
+deployed with migration 28 applied and explicitly activated. The signed Send Email
+hook, private welcome sender and one-minute bounded retries are enabled; password
+security alerts remain enabled. Endpoint authorization/empty-queue checks pass,
+but real signup/reset/password-change email delivery still needs device testing. See
+[email delivery activation and rollback](EMAIL_DELIVERY.md) for the configured
+setup, rollback steps and remaining hosted signup/reset delivery tests.
+
 After the user's successful Android checklist (including password reset/login,
 Google signup, push, media, admin, community and account deletion), normal
 development/preview/production builds now use Supabase + R2. `preview-supabase`

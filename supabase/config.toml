@@ -13,3 +13,11 @@ verify_jwt = true
 # This endpoint is protected by withSupabase auth:"secret", not public access.
 [functions.retry-account-deletion]
 verify_jwt = false
+
+# Auth hook verifies Standard Webhooks signature before admin reads/sending.
+[functions.send-auth-email]
+verify_jwt = false
+
+# Private queue processor; withSupabase requires a server secret API key.
+[functions.send-welcome-email]
+verify_jwt = false

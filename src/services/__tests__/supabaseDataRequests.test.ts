@@ -166,9 +166,15 @@ test("report/claim lookups keep owner filters and discard late private replies",
   expect(filters).toContainEqual(["reported_by_user_id", A]);
   transition(sessionA);
   executeRest.mockImplementationOnce(async () => { transition(sessionB); return { data: [{ id: A, user_id: A }] }; });
-  expect(await getMySupabaseClaimForRestaurant(B)).toBeNull();
+  await expect(getMySupabaseClaimForRestaurant(B)).rejects.toThrow("session changed");
   expect(filters).toContainEqual(["user_id", A]);
   expect(headers).toEqual(["Bearer fixture-token-a", "Bearer fixture-token-a"]);
+});
+test("claim status errors fail closed instead of masquerading as no pending claim", async () => {
+  executeRest.mockResolvedValueOnce({ data: null, error: { message: "Offline" } });
+  await expect(getMySupabaseClaimForRestaurant(B)).rejects.toThrow("Couldn't check your claim status");
+  executeRest.mockResolvedValueOnce({ data: [], error: null });
+  expect(await getMySupabaseClaimForRestaurant(B)).toBeNull();
 });
 test("push resolution uses owner-filtered RLS reads and fixed credentials", async () => {
   executeRest.mockResolvedValueOnce({ data: { id: B, user_id: A, actor_id: null, type: "comment", title: "Fixture", body: "Fixture", data: {}, is_read: false } });
